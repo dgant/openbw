@@ -186,6 +186,9 @@ struct sync_functions: action_functions {
 	explicit sync_functions(state& st, action_state& action_st, sync_state& sync_st) : action_functions(st, action_st), sync_st(sync_st) {}
 
 	std::function<void(int player_slot, data_loading::data_reader_le&)> on_custom_action;
+	virtual void play_sound(int id, xy position, const unit_t* source_unit = nullptr, bool add_race_index = false) {
+		std::cout << "sync_functions" << std::endl;
+	}
 
 	template<typename action_F>
 	void execute_scheduled_actions(action_F&& action_f) {

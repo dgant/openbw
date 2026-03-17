@@ -3,6 +3,7 @@
 #include <emscripten.h>
 #endif
 
+#include <iostream>
 #include "ui.h"
 #include "common.h"
 #include "bwgame.h"
@@ -226,6 +227,7 @@ extern "C" void dlfree(void*);
 
 size_t max_bytes_allocated = 160 * 1024 * 1024;
 
+/*
 extern "C" void* malloc(size_t n) {
 	void* r = dlmalloc(n);
 	while (!r) {
@@ -243,6 +245,7 @@ extern "C" void free(void* ptr) {
 	bytes_allocated -= alloc_size(ptr);
 	dlfree(ptr);
 }
+*/
 
 #ifdef EMSCRIPTEN
 
@@ -654,6 +657,7 @@ int main() {
 	ui.screen_pos = {(int)ui.game_st.map_width / 2 - (int)screen_width / 2, (int)ui.game_st.map_height / 2 - (int)screen_height / 2};
 
 	ui.set_image_data();
+	ui.set_volume(80);
 
 	log("loaded in %dms\n", std::chrono::duration_cast<std::chrono::milliseconds>(clock.now() - start).count());
 

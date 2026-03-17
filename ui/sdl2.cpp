@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <memory>
 #include <csignal>
+#include <iostream>
 
 using bwgame::ui::log;
 using bwgame::ui::fatal_error;
@@ -60,7 +61,7 @@ struct window_impl {
 		if (window) fatal_error("window already created");
 		Uint32 flags = 0;
 		flags |= SDL_WINDOW_RESIZABLE;
-		window = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, flags);
+		window = SDL_CreateWindow(title, 0, 0, width, height, flags);
 		if (!window) log("SDL_CreateWindow failed: %s\n", SDL_GetError());
 		if (window) {
 			SDL_StartTextInput();

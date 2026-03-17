@@ -331,7 +331,9 @@ struct state : state_base_copyable, state_base_non_copyable {
 
 struct state_functions {
 
-	virtual void play_sound(int id, xy position, const unit_t* source_unit = nullptr, bool add_race_index = false) {}
+	virtual void play_sound(int id, xy position, const unit_t* source_unit = nullptr, bool add_race_index = false) {
+		std::cout <<  "state_functions" << std::endl;
+	}
 	virtual void on_unit_deselect(unit_t* u) {}
 
 	virtual void on_unit_destroy(unit_t* u) {}
@@ -19772,6 +19774,10 @@ struct game_load_functions : state_functions {
 		bool create_no_units = false;
 	};
 	setup_info_t setup_info;
+
+	virtual void play_sound(int id, xy position, const unit_t* source_unit = nullptr, bool add_race_index = false) {
+		std::cout << "game_load_functions" << std::endl;
+	}
 
 	unit_type_t* get_unit_type(UnitTypes id) const {
 		if ((size_t)id >= 228) error("invalid unit id %d", (size_t)id);
