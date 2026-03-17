@@ -176,7 +176,7 @@ size_t bytes_allocated = 0;
 void free_memory() {
 	if (!g_m) out_of_memory();
 	size_t n_states = g_m->saved_states.size();
-	printf("n_states is %d\n", n_states);
+	printf("n_states is %zu\n", n_states);
 	if (n_states <= 2) out_of_memory();
 	size_t n;
 	if (n_states >= 300) n = 1 + freemem_rand() % (n_states - 2);
@@ -684,4 +684,3 @@ int main() {
 
 	return 0;
 }
-
