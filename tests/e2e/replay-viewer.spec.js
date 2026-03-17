@@ -1,11 +1,30 @@
 const { test, expect } = require("@playwright/test");
 const fs = require("fs/promises");
 
-const replayPath = "/workspace/replays/PurpleWave vs Monster Tau Cross CTR_41B69CB9.rep";
+const replayName = "PurpleWave vs Monster Tau Cross CTR_41B69CB9.rep";
+const replayPath = `/workspace/replays/${replayName}`;
 
-test("loads bundled MPQs and starts a replay from drag and drop", async ({ page }) => {
+async function createReplayDrop(page) {
+  const replayBuffer = await fs.readFile(replayPath);
+  return page.evaluateHandle(
+    ({ name, mimeType, bytes }) => {
+      const dataTransfer = new DataTransfer();
+      const file = new File([new Uint8Array(bytes)], name, { type: mimeType });
+      dataTransfer.items.add(file);
+      return dataTransfer;
+    },
+    {
+      name: replayName,
+      mimeType: "application/octet-stream",
+      bytes: [...replayBuffer]
+    }
+  );
+}
+
+async function createLogCollectors(page) {
   const pageErrors = [];
   const consoleProblems = [];
+
   page.on("pageerror", (error) => {
     pageErrors.push(error.message);
   });
@@ -15,30 +34,138 @@ test("loads bundled MPQs and starts a replay from drag and drop", async ({ page 
     }
   });
 
+  return { pageErrors, consoleProblems };
+}
+
+async function loadReplay(page) {
   await page.goto("/");
   await expect(page.locator("#rv_modal")).toBeHidden({ timeout: 30000 });
-
-  const replayBuffer = await fs.readFile(replayPath);
-  const dataTransfer = await page.evaluateHandle(
-    ({ name, mimeType, bytes }) => {
-      const dataTransfer = new DataTransfer();
-      const file = new File([new Uint8Array(bytes)], name, { type: mimeType });
-      dataTransfer.items.add(file);
-      return dataTransfer;
-    },
-    {
-      name: "PurpleWave vs Monster Tau Cross CTR_41B69CB9.rep",
-      mimeType: "application/octet-stream",
-      bytes: [...replayBuffer]
-    }
-  );
-  await page.dispatchEvent("body", "drop", { dataTransfer });
-
+  const drop = await createReplayDrop(page);
+  await page.dispatchEvent("body", "drop", { dataTransfer: drop });
   await expect(page.locator("#top")).toBeHidden({ timeout: 30000 });
-  await expect.poll(() => page.evaluate(() => _replay_get_value(2)), {
-    timeout: 30000
-  }).toBeGreaterThan(0);
+  await expect
+    .poll(() => page.evaluate(() => _replay_get_value(2)), { timeout: 30000 })
+    .toBeGreaterThan(0);
   await expect(page.locator("#nick1")).toContainText("PurpleWave");
+}
+
+function assertCleanLogs({ pageErrors, consoleProblems }) {
   expect(pageErrors).toEqual([]);
   expect(consoleProblems).toEqual([]);
+}
+
+test("boots with bundled MPQs and starts a replay from drag and drop", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+
+  await expect(page.locator("#map1")).toContainText("Tau Cross");
+  await expect(page.locator("#nick2")).toContainText("Monster");
+  await expect(page.locator("#rv-rc-timer")).toContainText("time:");
+  await expect(page.locator("#rv-rc-speed")).toContainText("speed:");
+  assertCleanLogs(logs);
+});
+
+test("existing buttons and hotkeys work during replay playback", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+
+  await page.keyboard.press("h");
+  await expect(page.locator("#quick_help")).toBeVisible();
+  await page.keyboard.press("h");
+  await expect(page.locator("#quick_help")).toBeHidden();
+
+  await expect(page.locator("#rv-rc-sound")).toHaveClass(/rv-rc-sound/);
+  await page.keyboard.press("s");
+  await expect(page.locator("#rv-rc-sound")).toHaveClass(/rv-rc-muted/);
+  await page.click("#rv-rc-sound");
+  await expect(page.locator("#rv-rc-sound")).toHaveClass(/rv-rc-sound/);
+
+  await expect.poll(() => page.evaluate(() => _replay_get_value(0))).toBe(1);
+  await page.click("#rv-rc-faster");
+  await expect.poll(() => page.evaluate(() => _replay_get_value(0))).toBe(2);
+  await page.keyboard.press("z");
+  await expect.poll(() => page.evaluate(() => _replay_get_value(0))).toBe(1);
+
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(0);
+  await page.click("#rv-rc-play");
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(1);
+  await page.keyboard.press("p");
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(0);
+
+  const frameBeforeJump = await page.evaluate(() => _replay_get_value(2));
+  await page.keyboard.press("c");
+  await expect
+    .poll(() => page.evaluate(() => _replay_get_value(3)), { timeout: 5000 })
+    .toBeLessThan(frameBeforeJump);
+
+  await page.keyboard.press("g");
+  await expect(page.locator("#goto")).toBeVisible();
+  await page.fill("#goto-frame-value", "1500");
+  await page.click("#goto-frame-submit");
+  await expect(page.locator("#goto")).toBeHidden();
+  await expect
+    .poll(() => page.evaluate(() => _replay_get_value(2)), { timeout: 30000 })
+    .toBeGreaterThan(1400);
+
+  await expect(page.locator("#info_tab")).toBeVisible();
+  await expect(page.locator("#info_tab_panel1")).toHaveClass(/is-active/);
+  await page.keyboard.press("2");
+  await expect(page.locator("#info_tab")).toBeVisible();
+  await expect(page.locator("#info_tab_panel2")).toHaveClass(/is-active/);
+  await page.keyboard.press("3");
+  await expect(page.locator("#info_tab_panel3")).toHaveClass(/is-active/);
+  await page.keyboard.press("4");
+  await expect(page.locator("#info_tab_panel3")).toHaveClass(/is-active/);
+
+  await expect(page.locator("#graphs_tab")).toBeHidden();
+  await page.keyboard.press("5");
+  await expect(page.locator("#graphs_tab")).toBeVisible();
+  await page.keyboard.press("5");
+  await expect(page.locator("#graphs_tab")).toBeHidden();
+
+  await expect.poll(() => page.evaluate(() => localStorage.zoomLevel || "0")).toBe("0");
+  await page.keyboard.press("y");
+  await expect.poll(() => page.evaluate(() => localStorage.zoomLevel)).toBe("1");
+  await page.click("#zoom-out");
+  await expect.poll(() => page.evaluate(() => localStorage.zoomLevel)).toBe("0");
+
+  const progressBarVisibleBefore = await page.locator(".rv-rc-progress-bar > div").first().isVisible();
+  expect(progressBarVisibleBefore).toBe(true);
+  await page.keyboard.press("n");
+  await expect(page.locator(".rv-rc-progress-bar > div")).toBeHidden();
+  await page.keyboard.press("n");
+  await expect(page.locator(".rv-rc-progress-bar > div")).toBeVisible();
+
+  assertCleanLogs(logs);
+});
+
+test("bottom bar stays single-line and hides stats progressively on narrow viewports", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await loadReplay(page);
+
+  await page.setViewportSize({ width: 800, height: 700 });
+  await expect(page.locator("#info-dock")).toBeHidden();
+  await expect(page.locator("#race1")).toBeHidden();
+  await expect(page.locator("#apm1")).toBeHidden();
+  await expect(page.locator("#army1")).toBeVisible();
+  await expect(page.locator("#workers1")).toBeVisible();
+  await expect(page.locator("#supply1")).toBeVisible();
+  await expect(page.locator("#nick1")).toContainText("PurpleWave");
+
+  await page.setViewportSize({ width: 375, height: 667 });
+  await expect(page.locator("#info-dock")).toBeHidden();
+  await expect(page.locator("#race1")).toBeHidden();
+  await expect(page.locator("#apm1")).toBeHidden();
+  await expect(page.locator("#army1")).toBeHidden();
+  await expect(page.locator("#workers1")).toBeHidden();
+  await expect(page.locator("#minerals1")).toBeHidden();
+  await expect(page.locator("#gas1")).toBeHidden();
+  await expect(page.locator("#supply1")).toBeHidden();
+  await expect(page.locator("#nick1")).toContainText("PurpleW.");
+
+  assertCleanLogs(logs);
 });
