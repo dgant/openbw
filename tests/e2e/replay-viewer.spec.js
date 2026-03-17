@@ -178,3 +178,71 @@ test("bottom bar stays single-line and hides stats progressively on narrow viewp
 
   assertCleanLogs(logs);
 });
+
+test("export button records a WebM download flow", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__openbwTestExportFrameLimit = 48;
+    window.__mockDownloads = [];
+
+    URL.createObjectURL = (blob) => {
+      window.__mockDownloads.push({ size: blob.size, type: blob.type });
+      return "blob:mock-openbw";
+    };
+    URL.revokeObjectURL = () => {};
+
+    HTMLAnchorElement.prototype.click = function() {
+      window.__mockDownloadName = this.download;
+      window.__mockDownloadHref = this.href;
+    };
+
+    HTMLCanvasElement.prototype.captureStream = () => ({
+      getTracks() {
+        return [{ stop() {} }];
+      }
+    });
+
+    class MockMediaRecorder {
+      constructor() {
+        this.state = "inactive";
+      }
+      static isTypeSupported() {
+        return true;
+      }
+      start() {
+        this.state = "recording";
+      }
+      stop() {
+        this.state = "inactive";
+        if (this.ondataavailable) {
+          this.ondataavailable({ data: new Blob(["openbw-export"], { type: "video/webm" }) });
+        }
+        if (this.onstop) {
+          this.onstop();
+        }
+      }
+    }
+
+    window.MediaRecorder = MockMediaRecorder;
+  });
+
+  const logs = await createLogCollectors(page);
+  await loadReplay(page);
+
+  await page.click("#rv-rc-export");
+  await expect(page.locator("#rv-rc-export")).toHaveClass(/is-exporting/);
+  await expect
+    .poll(() => page.evaluate(() => window.__mockDownloads.length), { timeout: 15000 })
+    .toBe(1);
+  await expect(page.locator("#rv-rc-export")).not.toHaveClass(/is-exporting/);
+  await expect
+    .poll(() => page.evaluate(() => window.__mockDownloadName))
+    .toContain(".webm");
+  await expect
+    .poll(() => page.evaluate(() => window.__mockDownloads[0].size))
+    .toBeGreaterThan(0);
+  await expect
+    .poll(() => page.evaluate(() => _observer_get_value()))
+    .toBe(1);
+
+  assertCleanLogs(logs);
+});
