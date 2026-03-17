@@ -51,8 +51,15 @@ struct saved_state {
 	std::array<apm_t, 12> apm;
 };
 
+extern bool any_replay_loaded;
+
 struct main_t {
 	ui_functions ui;
+	bool auto_observer_enabled = true;
+	bool observer_has_focus = false;
+	xy observer_focus_pos;
+	int observer_focus_score = 0;
+	int observer_last_switch_frame = 0;
 
 	main_t(game_player player) : ui(std::move(player)) {}
 
@@ -67,6 +74,116 @@ struct main_t {
 	void reset() {
 		saved_states.clear();
 		ui.reset();
+		auto_observer_enabled = true;
+		observer_has_focus = false;
+		observer_focus_pos = {};
+		observer_focus_score = 0;
+		observer_last_switch_frame = 0;
+	}
+
+	void clamp_screen_pos() {
+		if (ui.screen_pos.y + (int)ui.view_height > ui.game_st.map_height) ui.screen_pos.y = ui.game_st.map_height - ui.view_height;
+		if (ui.screen_pos.y < 0) ui.screen_pos.y = 0;
+		if (ui.screen_pos.x + (int)ui.view_width > ui.game_st.map_width) ui.screen_pos.x = ui.game_st.map_width - ui.view_width;
+		if (ui.screen_pos.x < 0) ui.screen_pos.x = 0;
+	}
+
+	void move_camera_towards(xy map_pos) {
+		xy target_screen_pos = map_pos - xy((int)ui.view_width / 2, (int)ui.view_height / 2);
+		auto clamp_delta = [](int value, int max_step) {
+			if (value > max_step) return max_step;
+			if (value < -max_step) return -max_step;
+			return value;
+		};
+		ui.screen_pos.x += clamp_delta(target_screen_pos.x - ui.screen_pos.x, 48);
+		ui.screen_pos.y += clamp_delta(target_screen_pos.y - ui.screen_pos.y, 40);
+		clamp_screen_pos();
+	}
+
+	void update_observer_camera() {
+		if (!auto_observer_enabled) return;
+		if (!any_replay_loaded) return;
+
+		struct observer_candidate {
+			xy pos;
+			int score = 0;
+		};
+
+		auto consider_candidate = [&](optional<observer_candidate>& best, xy pos, int score) {
+			if (score <= 0) return;
+			if (!best || score > best->score) best = observer_candidate{pos, score};
+		};
+
+		optional<observer_candidate> best;
+		xy camera_center = ui.screen_pos + xy((int)ui.view_width / 2, (int)ui.view_height / 2);
+
+		for (bullet_t* b : ptr(ui.st.active_bullets)) {
+			if (!b->bullet_owner_unit) continue;
+			int owner = b->bullet_owner_unit->owner;
+			if (owner < 0 || owner >= 12) continue;
+			if (ui.st.players[owner].controller != player_t::controller_occupied) continue;
+			xy focus = b->bullet_target ? b->bullet_target->sprite->position : b->bullet_target_pos;
+			int distance_bias = ui.xy_length(focus - camera_center) / 32;
+			consider_candidate(best, focus, 1400 - distance_bias);
+		}
+
+		auto score_unit = [&](unit_t* u) {
+			if (!u || !u->sprite) return;
+			if (u->owner < 0 || u->owner >= 12) return;
+			if (ui.st.players[u->owner].controller != player_t::controller_occupied) return;
+			if (!ui.u_completed(u) || ui.ut_worker(u) || ui.ut_building(u)) return;
+
+			int score = 0;
+			if (ui.unit_can_attack(u)) score += 80;
+			if (u->ground_weapon_cooldown || u->air_weapon_cooldown) score += 420;
+			if (u->order_target.unit && ui.unit_target_is_enemy(u, u->order_target.unit)) score += 520;
+			else if (u->auto_target_unit && ui.unit_target_is_enemy(u, u->auto_target_unit)) score += 460;
+
+			if (u->order_type) {
+				switch (u->order_type->id) {
+				case Orders::AttackUnit:
+				case Orders::AttackMove:
+				case Orders::CarrierAttack:
+				case Orders::ReaverAttack:
+				case Orders::HoldPosition:
+					score += 220;
+					break;
+				case Orders::Move:
+				case Orders::Patrol:
+					score += 120;
+					break;
+				default:
+					break;
+				}
+			}
+
+			if (u->order_target.unit && u->order_target.unit->sprite) {
+				xy midpoint = (u->sprite->position + u->order_target.unit->sprite->position) / 2;
+				score += 100;
+				consider_candidate(best, midpoint, score);
+			}
+
+			int distance_bias = ui.xy_length(u->sprite->position - camera_center) / 48;
+			consider_candidate(best, u->sprite->position, score - distance_bias);
+		};
+
+		for (unit_t* u : ptr(ui.st.visible_units)) score_unit(u);
+		for (unit_t* u : ptr(ui.st.hidden_units)) score_unit(u);
+
+		if (best) {
+			int current_frame = ui.st.current_frame;
+			if (!observer_has_focus || current_frame - observer_last_switch_frame >= 72 || best->score > observer_focus_score + 220) {
+				observer_has_focus = true;
+				observer_focus_pos = best->pos;
+				observer_focus_score = best->score;
+				observer_last_switch_frame = current_frame;
+			}
+		}
+
+		if (observer_has_focus) {
+			move_camera_towards(observer_focus_pos);
+			if (observer_focus_score > 0) observer_focus_score -= 1;
+		}
 	}
 
 	void update() {
@@ -151,6 +268,7 @@ struct main_t {
 		}
 
 		ui.update();
+		update_observer_camera();
 	}
 };
 
@@ -349,6 +467,20 @@ extern "C" void replay_set_value(int index, double value) {
 		if (m->ui.replay_frame < 0) m->ui.replay_frame = 0;
 		if (m->ui.replay_frame > m->ui.replay_st.end_frame) m->ui.replay_frame = m->ui.replay_st.end_frame;
 		break;
+	}
+}
+
+extern "C" double observer_get_value() {
+	if (!m) return 0.0;
+	return m->auto_observer_enabled ? 1.0 : 0.0;
+}
+
+extern "C" void observer_set_value(double value) {
+	if (!m) return;
+	m->auto_observer_enabled = value != 0.0;
+	if (m->auto_observer_enabled) {
+		m->observer_has_focus = false;
+		m->observer_focus_score = 0;
 	}
 }
 

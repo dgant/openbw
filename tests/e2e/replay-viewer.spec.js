@@ -76,6 +76,15 @@ test("existing buttons and hotkeys work during replay playback", async ({ page }
   await page.keyboard.press("h");
   await expect(page.locator("#quick_help")).toBeHidden();
 
+  await expect(page.locator("#rv-rc-observer")).toHaveClass(/is-enabled/);
+  await expect.poll(() => page.evaluate(() => _observer_get_value())).toBe(1);
+  await page.click("#rv-rc-observer");
+  await expect(page.locator("#rv-rc-observer")).not.toHaveClass(/is-enabled/);
+  await expect.poll(() => page.evaluate(() => _observer_get_value())).toBe(0);
+  await page.click("#rv-rc-observer");
+  await expect(page.locator("#rv-rc-observer")).toHaveClass(/is-enabled/);
+  await expect.poll(() => page.evaluate(() => _observer_get_value())).toBe(1);
+
   await expect(page.locator("#rv-rc-sound")).toHaveClass(/rv-rc-sound/);
   await page.keyboard.press("s");
   await expect(page.locator("#rv-rc-sound")).toHaveClass(/rv-rc-muted/);
