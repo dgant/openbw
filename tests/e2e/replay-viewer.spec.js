@@ -63,6 +63,7 @@ test("boots with bundled MPQs and starts a replay from drag and drop", async ({ 
   await expect(page.locator("#nick2")).toContainText("Monster");
   await expect(page.locator("#rv-rc-timer")).toContainText("time:");
   await expect(page.locator("#rv-rc-speed")).toContainText("speed:");
+  await expect(page.locator("#viewport-export")).toBeVisible();
   assertCleanLogs(logs);
 });
 
@@ -119,14 +120,17 @@ test("existing buttons and hotkeys work during replay playback", async ({ page }
     .toBeGreaterThan(1400);
 
   await expect(page.locator("#info_tab")).toBeVisible();
-  await expect(page.locator("#info_tab_panel1")).toHaveClass(/is-active/);
+  await expect(page.locator("#info_tab_panel1")).toBeVisible();
+  await expect(page.locator("#info_tab_panel2")).toBeVisible();
+  await expect(page.locator("#info_tab_panel3")).toBeVisible();
+  await expect(page.locator("#info_tab_panel4")).toBeHidden();
   await page.keyboard.press("2");
-  await expect(page.locator("#info_tab")).toBeVisible();
-  await expect(page.locator("#info_tab_panel2")).toHaveClass(/is-active/);
+  await expect(page.locator("#info_tab_panel1")).toBeVisible();
+  await expect(page.locator("#info_tab_panel2")).toBeVisible();
   await page.keyboard.press("3");
-  await expect(page.locator("#info_tab_panel3")).toHaveClass(/is-active/);
+  await expect(page.locator("#info_tab_panel3")).toBeVisible();
   await page.keyboard.press("4");
-  await expect(page.locator("#info_tab_panel3")).toHaveClass(/is-active/);
+  await expect(page.locator("#info_tab_panel3")).toBeVisible();
 
   await expect(page.locator("#graphs_tab")).toBeHidden();
   await page.keyboard.press("5");
@@ -175,6 +179,16 @@ test("bottom bar stays single-line and hides stats progressively on narrow viewp
   await expect(page.locator("#gas1")).toBeHidden();
   await expect(page.locator("#supply1")).toBeHidden();
   await expect(page.locator("#nick1")).toContainText("PurpleW.");
+  await expect.poll(() =>
+    page.evaluate(() => {
+      const row = document.getElementById("infobar_row_player1");
+      const map = document.getElementById("map2");
+      return {
+        rowWrapped: row.scrollHeight > row.clientHeight,
+        mapWrapped: map.scrollHeight > map.clientHeight
+      };
+    })
+  ).toEqual({ rowWrapped: false, mapWrapped: false });
 
   assertCleanLogs(logs);
 });
@@ -230,6 +244,7 @@ test("export button records a WebM download flow", async ({ page }) => {
 
   await page.click("#rv-rc-export");
   await expect(page.locator("#rv-rc-export")).toHaveClass(/is-exporting/);
+  await expect(page.locator("#rv_modal")).toHaveClass(/rv-modal-bottom/);
   await expect
     .poll(() => page.evaluate(() => window.__mockDownloads.length), { timeout: 15000 })
     .toBe(1);
