@@ -12,6 +12,8 @@
 #include <chrono>
 #include <unordered_map>
 #include <thread>
+#include <algorithm>
+#include <cmath>
 
 using namespace bwgame;
 
@@ -53,23 +55,34 @@ struct saved_state {
 };
 
 extern bool any_replay_loaded;
+void free_memory();
+constexpr size_t max_saved_states = 96;
 
 struct main_t {
 	ui_functions ui;
 	bool auto_observer_enabled = true;
+	bool fog_of_war_enabled = true;
+	uint32_t fog_of_war_player_mask = 0;
+	bool fog_of_war_player_mask_custom = false;
+	bool force_red_blue_player_colors = false;
 	bool observer_initialized = false;
-	int observer_camera_move_time = 150;
-	int observer_camera_move_time_min = 50;
-	int observer_watch_scout_worker_until = 7500;
-	int observer_last_moved = 0;
-	int observer_last_moved_priority = 0;
 	int observer_last_frame_seen = -1;
-	xy observer_last_moved_position;
 	xy observer_current_camera_position;
 	xy observer_focus_position;
-	unit_id_32 observer_focus_unit_id;
-	bool observer_follow_unit = false;
 	std::unordered_map<int, int> observer_unit_health;
+	std::chrono::steady_clock::time_point observer_manual_override_until = std::chrono::steady_clock::time_point::min();
+	std::chrono::steady_clock::time_point observer_v3_jump_cooldown_until = std::chrono::steady_clock::time_point::min();
+	std::chrono::steady_clock::time_point observer_v3_nuke_hold_until = std::chrono::steady_clock::time_point::min();
+	std::chrono::steady_clock::time_point observer_v3_last_update_time = std::chrono::steady_clock::time_point::min();
+	xy observer_v3_nuke_hold_position;
+	double observer_v3_camera_x = 0.0;
+	double observer_v3_camera_y = 0.0;
+	double observer_v3_velocity_x = 0.0;
+	double observer_v3_velocity_y = 0.0;
+	size_t observer_v3_interest_cursor = 0;
+	std::unordered_map<int, double> observer_v3_interest_scores;
+	std::unordered_map<int, int> observer_v3_last_viewport_frame;
+	std::unordered_map<int, bool> observer_v3_ever_viewport_visible;
 
 	main_t(game_player player) : ui(std::move(player)) {}
 
@@ -85,16 +98,32 @@ struct main_t {
 		saved_states.clear();
 		ui.reset();
 		auto_observer_enabled = true;
+		fog_of_war_enabled = true;
+		fog_of_war_player_mask = 0;
+		fog_of_war_player_mask_custom = false;
+		force_red_blue_player_colors = false;
+		reset_observer_runtime_state();
+	}
+
+	void reset_observer_runtime_state() {
 		observer_initialized = false;
-		observer_last_moved = 0;
-		observer_last_moved_priority = 0;
 		observer_last_frame_seen = -1;
-		observer_last_moved_position = {};
 		observer_current_camera_position = {};
 		observer_focus_position = {};
-		observer_focus_unit_id = {};
-		observer_follow_unit = false;
 		observer_unit_health.clear();
+		observer_manual_override_until = std::chrono::steady_clock::time_point::min();
+		observer_v3_jump_cooldown_until = std::chrono::steady_clock::time_point::min();
+		observer_v3_nuke_hold_until = std::chrono::steady_clock::time_point::min();
+		observer_v3_last_update_time = std::chrono::steady_clock::time_point::min();
+		observer_v3_nuke_hold_position = {};
+		observer_v3_camera_x = 0.0;
+		observer_v3_camera_y = 0.0;
+		observer_v3_velocity_x = 0.0;
+		observer_v3_velocity_y = 0.0;
+		observer_v3_interest_cursor = 0;
+		observer_v3_interest_scores.clear();
+		observer_v3_last_viewport_frame.clear();
+		observer_v3_ever_viewport_visible.clear();
 	}
 
 	void clamp_screen_pos() {
@@ -106,6 +135,45 @@ struct main_t {
 
 	bool is_occupied_player(int owner) const {
 		return owner >= 0 && owner < 12 && ui.st.players[owner].controller == player_t::controller_occupied;
+	}
+
+	uint32_t fog_of_war_vision_mask() const {
+		uint32_t mask = 0;
+		for (int owner = 0; owner != 12; ++owner) {
+			if (!is_occupied_player(owner)) continue;
+			if (fog_of_war_player_mask_custom && (fog_of_war_player_mask & (1u << owner)) == 0) continue;
+			mask |= 1u << owner;
+		}
+		if (fog_of_war_player_mask_custom && mask == 0) return 0;
+		return mask;
+	}
+
+	void sync_fog_of_war() {
+		ui.vision = fog_of_war_enabled ? fog_of_war_vision_mask() : 0;
+		ui.force_full_fog = fog_of_war_enabled && ui.vision == 0;
+	}
+
+	bool get_forced_red_blue_players(int& first_player, int& second_player) const {
+		first_player = -1;
+		second_player = -1;
+		for (int owner = 0; owner != 12; ++owner) {
+			if (!is_occupied_player(owner)) continue;
+			if (first_player == -1) first_player = owner;
+			else if (second_player == -1) second_player = owner;
+			else return false;
+		}
+		return first_player != -1 && second_player != -1;
+	}
+
+	int display_player_color(int player) const {
+		if (!is_occupied_player(player)) return ui.st.players.at(player).color;
+		if (!force_red_blue_player_colors) return ui.st.players.at(player).color;
+		int first_player = -1;
+		int second_player = -1;
+		if (!get_forced_red_blue_players(first_player, second_player)) return ui.st.players.at(player).color;
+		if (player == first_player) return 0;
+		if (player == second_player) return 1;
+		return ui.st.players.at(player).color;
 	}
 
 	xy observer_player_start_location(int owner) const {
@@ -121,8 +189,6 @@ struct main_t {
 	void initialize_observer_camera() {
 		if (observer_initialized) return;
 		observer_initialized = true;
-		observer_follow_unit = false;
-		observer_focus_unit_id = {};
 		observer_current_camera_position = ui.screen_pos + xy((int)ui.view_width / 2, (int)ui.view_height / 2);
 		observer_focus_position = observer_current_camera_position;
 		for (int owner = 0; owner != 12; ++owner) {
@@ -133,34 +199,24 @@ struct main_t {
 		}
 	}
 
-	bool is_near_own_start_location(xy pos, int owner) const {
-		if (!observer_has_start_location(owner)) return false;
-		return ui.xy_length(observer_player_start_location(owner) - pos) <= 10 * 32;
-	}
-
-	bool is_near_enemy_start_location(xy pos, int owner) const {
-		for (int other = 0; other != 12; ++other) {
-			if (!observer_has_start_location(other) || other == owner) continue;
-			if (ui.xy_length(observer_player_start_location(other) - pos) <= 1000) return true;
-		}
-		return false;
-	}
-
-	bool is_army_unit(unit_t* unit) const {
-		if (!unit) return false;
-		return !(ui.ut_worker(unit) ||
-			ui.ut_building(unit) ||
-			ui.unit_is(unit, UnitTypes::Terran_Vulture_Spider_Mine) ||
-			ui.unit_is(unit, UnitTypes::Zerg_Overlord) ||
-			ui.unit_is(unit, UnitTypes::Zerg_Larva));
-	}
-
-	bool should_move_camera(int priority) const {
-		bool is_time_to_move = ui.st.current_frame - observer_last_moved >= observer_camera_move_time;
-		bool is_time_to_move_if_higher_prio = ui.st.current_frame - observer_last_moved >= observer_camera_move_time_min;
-		bool is_higher_prio = observer_last_moved_priority < priority;
-		return is_time_to_move || (is_higher_prio && is_time_to_move_if_higher_prio);
-	}
+	xy observer_view_center_offset() const;
+	xy observer_view_center_position() const;
+	bool observer_position_in_viewport(xy pos) const;
+	bool observer_position_in_middle_third(xy pos) const;
+	double observer_distance_sq(xy a, xy b) const;
+	bool unit_is_under_dark_swarm_v3(const unit_t* unit) const;
+	bool unit_is_under_disruption_web_v3(const unit_t* unit) const;
+	bool unit_has_v3_attention_status(unit_t* unit);
+	bool observer_v3_unit_eligible(unit_t* unit) const;
+	void observer_v3_apply_center(xy pos, bool reset_velocity);
+	bool observer_v3_focus_nukes(std::chrono::steady_clock::time_point now);
+	double observer_v3_compute_interest(unit_t* unit);
+	template <typename T>
+	void observer_v3_collect_eligible_units(T&& list, a_vector<unit_t*>& out);
+	void observer_v3_update_interest_queue(const a_vector<unit_t*>& eligible_units);
+	int observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target);
+	void observer_v3_update_motion(std::chrono::steady_clock::time_point now);
+	void update_observer_camera_v3(std::chrono::steady_clock::time_point now);
 
 	bool unit_is_attacking(unit_t* unit) const {
 		if (!unit || !unit->sprite || !unit->order_type) return false;
@@ -217,189 +273,20 @@ struct main_t {
 		return false;
 	}
 
-	void move_camera(xy pos, int priority) {
-		if (!should_move_camera(priority)) return;
-		if (!observer_follow_unit && observer_focus_position == pos) return;
-
-		observer_focus_position = pos;
-		observer_last_moved_position = observer_focus_position;
-		observer_last_moved = ui.st.current_frame;
-		observer_last_moved_priority = priority;
-		observer_follow_unit = false;
-		observer_focus_unit_id = {};
-	}
-
-	void move_camera(unit_t* unit, int priority) {
-		if (!unit || !unit->sprite || !should_move_camera(priority)) return;
-		unit_id_32 unit_id = ui.get_unit_id_32(unit);
-		if (observer_follow_unit && observer_focus_unit_id == unit_id) return;
-
-		observer_focus_unit_id = unit_id;
-		observer_focus_position = unit->sprite->position;
-		observer_last_moved_position = observer_focus_position;
-		observer_last_moved = ui.st.current_frame;
-		observer_last_moved_priority = priority;
-		observer_follow_unit = true;
-	}
-
-	void move_camera_falling_nuke() {
-		int prio = 5;
-		if (!should_move_camera(prio)) return;
-
-		for (unit_t* unit : ptr(ui.st.visible_units)) {
-			if (!unit || !unit->sprite) continue;
-			if (ui.unit_is(unit, UnitTypes::Terran_Nuclear_Missile) && unit->velocity.y > 0_fp8) {
-				move_camera(unit, prio);
-				return;
-			}
-		}
-		for (unit_t* unit : ptr(ui.st.hidden_units)) {
-			if (!unit || !unit->sprite) continue;
-			if (ui.unit_is(unit, UnitTypes::Terran_Nuclear_Missile) && unit->velocity.y > 0_fp8) {
-				move_camera(unit, prio);
-				return;
-			}
-		}
-	}
-
-	void move_camera_is_under_attack() {
-		int prio = 3;
-		if (!should_move_camera(prio)) return;
-
-		for (unit_t* unit : ptr(ui.st.visible_units)) {
-			if (!unit || !unit->sprite || !is_occupied_player(unit->owner)) continue;
-			if (unit_is_under_attack(unit)) move_camera(unit, prio);
-		}
-		for (unit_t* unit : ptr(ui.st.hidden_units)) {
-			if (!unit || !unit->sprite || !is_occupied_player(unit->owner)) continue;
-			if (unit_is_under_attack(unit)) move_camera(unit, prio);
-		}
-	}
-
-	void move_camera_is_attacking() {
-		int prio = 3;
-		if (!should_move_camera(prio)) return;
-
-		for (unit_t* unit : ptr(ui.st.visible_units)) {
-			if (!unit || !unit->sprite || !is_occupied_player(unit->owner)) continue;
-			if (unit_is_attacking(unit)) move_camera(unit, prio);
-		}
-		for (unit_t* unit : ptr(ui.st.hidden_units)) {
-			if (!unit || !unit->sprite || !is_occupied_player(unit->owner)) continue;
-			if (unit_is_attacking(unit)) move_camera(unit, prio);
-		}
-	}
-
-	void move_camera_scout_worker() {
-		int high_prio = 2;
-		int low_prio = 0;
-		if (!should_move_camera(low_prio)) return;
-
-		for (unit_t* unit : ptr(ui.st.visible_units)) {
-			if (!unit || !unit->sprite || !is_occupied_player(unit->owner) || !ui.ut_worker(unit)) continue;
-			if (is_near_enemy_start_location(unit->sprite->position, unit->owner)) move_camera(unit, high_prio);
-			else if (!is_near_own_start_location(unit->sprite->position, unit->owner)) move_camera(unit, low_prio);
-		}
-		for (unit_t* unit : ptr(ui.st.hidden_units)) {
-			if (!unit || !unit->sprite || !is_occupied_player(unit->owner) || !ui.ut_worker(unit)) continue;
-			if (is_near_enemy_start_location(unit->sprite->position, unit->owner)) move_camera(unit, high_prio);
-			else if (!is_near_own_start_location(unit->sprite->position, unit->owner)) move_camera(unit, low_prio);
-		}
-	}
-
-	void move_camera_drop() {
-		int prio = 2;
-		if (!should_move_camera(prio)) return;
-
-		auto maybe_move_camera_drop = [&](unit_t* unit) {
-			if (!unit || !unit->sprite || !is_occupied_player(unit->owner)) return;
-			if (!(ui.unit_is(unit, UnitTypes::Zerg_Overlord) ||
-				ui.unit_is(unit, UnitTypes::Terran_Dropship) ||
-				ui.unit_is(unit, UnitTypes::Protoss_Shuttle))) return;
-			if (!is_near_enemy_start_location(unit->sprite->position, unit->owner)) return;
-			if (!unit_has_loaded_units(unit)) return;
-			move_camera(unit, prio);
-		};
-
-		for (unit_t* unit : ptr(ui.st.visible_units)) maybe_move_camera_drop(unit);
-		for (unit_t* unit : ptr(ui.st.hidden_units)) maybe_move_camera_drop(unit);
-	}
-
-	void move_camera_army() {
-		int prio = 1;
-		if (!should_move_camera(prio)) return;
-
-		int radius = 50;
-		unit_t* best_unit = nullptr;
-		int most_units_nearby = 0;
-
-		auto count_nearby = [&](unit_t* center) {
-			int nearby = 0;
-			auto count_in_list = [&](auto&& list) {
-				for (unit_t* other : list) {
-					if (!is_army_unit(other) || !other->sprite) continue;
-					if (ui.xy_length(other->sprite->position - center->sprite->position) <= radius) ++nearby;
-				}
-			};
-			count_in_list(ptr(ui.st.visible_units));
-			count_in_list(ptr(ui.st.hidden_units));
-			return nearby;
-		};
-
-		auto evaluate = [&](unit_t* unit) {
-			if (!is_army_unit(unit) || !unit->sprite) return;
-			int nearby = count_nearby(unit);
-			if (nearby > most_units_nearby) {
-				most_units_nearby = nearby;
-				best_unit = unit;
-			}
-		};
-
-		for (unit_t* unit : ptr(ui.st.visible_units)) evaluate(unit);
-		for (unit_t* unit : ptr(ui.st.hidden_units)) evaluate(unit);
-
-		if (most_units_nearby > 1) move_camera(best_unit, prio);
-	}
-
-	void update_camera_position() {
-		double move_factor = 0.1;
-		if (observer_follow_unit) {
-			if (unit_t* focus_unit = ui.get_unit(observer_focus_unit_id)) {
-				if (focus_unit->sprite) observer_focus_position = focus_unit->sprite->position;
-			} else {
-				observer_follow_unit = false;
-				observer_focus_unit_id = {};
-			}
-		}
-
-		observer_current_camera_position = observer_current_camera_position + xy(
-			(int)(move_factor * (observer_focus_position.x - observer_current_camera_position.x)),
-			(int)(move_factor * (observer_focus_position.y - observer_current_camera_position.y)));
-
-		ui.screen_pos = observer_current_camera_position - xy((int)ui.view_width / 2, (int)ui.view_height / 2 - 40);
-		clamp_screen_pos();
+	void pause_observer_for_manual_camera() {
+		observer_manual_override_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	}
 
 	void update_observer_camera() {
 		if (!auto_observer_enabled || !any_replay_loaded) return;
+		if (ui.st.current_frame != ui.replay_frame) return;
+		if (ui.is_paused || ui.is_done()) return;
+		if (std::chrono::steady_clock::now() < observer_manual_override_until) return;
 		if (observer_last_frame_seen != -1 && ui.st.current_frame < observer_last_frame_seen) {
-			observer_initialized = false;
-			observer_last_moved = 0;
-			observer_last_moved_priority = 0;
-			observer_follow_unit = false;
-			observer_focus_unit_id = {};
-			observer_unit_health.clear();
+			reset_observer_runtime_state();
 		}
 		observer_last_frame_seen = ui.st.current_frame;
-
-		initialize_observer_camera();
-		move_camera_falling_nuke();
-		move_camera_is_under_attack();
-		move_camera_is_attacking();
-		if (ui.st.current_frame <= observer_watch_scout_worker_until) move_camera_scout_worker();
-		move_camera_army();
-		move_camera_drop();
-		update_camera_position();
+		update_observer_camera_v3(std::chrono::steady_clock::now());
 	}
 
 	void update() {
@@ -432,6 +319,7 @@ struct main_t {
 						new_saved_states[v.first] = std::move(v.second);
 					}
 					std::swap(saved_states, new_saved_states);
+					while (saved_states.size() > max_saved_states) free_memory();
 				}
 			}
 			ui.replay_functions::next_frame();
@@ -483,7 +371,25 @@ struct main_t {
 			}
 		}
 
+		sync_fog_of_war();
+		int forced_first_player = -1;
+		int forced_second_player = -1;
+		uint8_t forced_first_color = 0;
+		uint8_t forced_second_color = 0;
+		bool force_player_colors = force_red_blue_player_colors && get_forced_red_blue_players(forced_first_player, forced_second_player);
+		if (force_player_colors) {
+			forced_first_color = ui.st.players.at(forced_first_player).color;
+			forced_second_color = ui.st.players.at(forced_second_player).color;
+			ui.st.players.at(forced_first_player).color = 0;
+			ui.st.players.at(forced_second_player).color = 1;
+		}
+		auto previous_screen_pos = ui.screen_pos;
 		ui.update();
+		if (ui.screen_pos != previous_screen_pos) pause_observer_for_manual_camera();
+		if (force_player_colors) {
+			ui.st.players.at(forced_first_player).color = forced_first_color;
+			ui.st.players.at(forced_second_player).color = forced_second_color;
+		}
 		update_observer_camera();
 	}
 };
@@ -624,14 +530,32 @@ struct js_file_reader {
 }
 }
 
+#include "observer_camera_v3.h"
+
 main_t* m;
 
 int current_width = -1;
 int current_height = -1;
 
+namespace {
+constexpr uint64_t max_resize_surface_bytes = 80ull * 1024ull * 1024ull;
+constexpr uint64_t estimated_resize_bytes_per_pixel = 12ull;
+
+bool ui_resize_dimensions_safe(int width, int height) {
+	if (width <= 0 || height <= 0) return false;
+	uint64_t pixels = (uint64_t)width * (uint64_t)height;
+	return pixels <= max_resize_surface_bytes / estimated_resize_bytes_per_pixel;
+}
+}
+
+extern "C" int ui_can_resize(int width, int height) {
+	return ui_resize_dimensions_safe(width, height) ? 1 : 0;
+}
+
 extern "C" void ui_resize(int width, int height) {
 	if (width == current_width && height == current_height) return;
 	if (width <= 0 || height <= 0) return;
+	if (!ui_resize_dimensions_safe(width, height)) return;
 	current_width = width;
 	current_height = height;
 	if (!m) return;
@@ -641,6 +565,32 @@ extern "C" void ui_resize(int width, int height) {
 	m->ui.wnd.destroy();
 	m->ui.wnd.create("test", 0, 0, width, height);
 	m->ui.resize(width, height);
+}
+
+extern "C" void ui_set_minimap_reference_size(int width, int height) {
+	if (!m) return;
+	m->ui.set_minimap_reference_size(width, height);
+}
+
+extern "C" double ui_get_screen_pos(int axis) {
+	if (!m) return 0.0;
+	if (axis == 1) return (double)m->ui.screen_pos.y;
+	return (double)m->ui.screen_pos.x;
+}
+
+extern "C" void ui_set_screen_center(int x, int y) {
+	if (!m) return;
+	m->ui.screen_pos = {x - (int)m->ui.view_width / 2, y - (int)m->ui.view_height / 2};
+	if (m->ui.screen_pos.y + (int)m->ui.view_height > m->ui.game_st.map_height) m->ui.screen_pos.y = m->ui.game_st.map_height - m->ui.view_height;
+	if (m->ui.screen_pos.y < 0) m->ui.screen_pos.y = 0;
+	if (m->ui.screen_pos.x + (int)m->ui.view_width > m->ui.game_st.map_width) m->ui.screen_pos.x = m->ui.game_st.map_width - m->ui.view_width;
+	if (m->ui.screen_pos.x < 0) m->ui.screen_pos.x = 0;
+}
+
+extern "C" void ui_set_screen_center_manual(int x, int y) {
+	if (!m) return;
+	ui_set_screen_center(x, y);
+	m->pause_observer_for_manual_camera();
 }
 
 extern "C" double replay_get_value(int index) {
@@ -691,20 +641,66 @@ extern "C" double observer_get_value() {
 	return m->auto_observer_enabled ? 1.0 : 0.0;
 }
 
+extern "C" double observer_get_mode() {
+	return 3.0;
+}
+
+extern "C" void observer_set_mode(double value) {
+	(void)value;
+}
+
 extern "C" void observer_set_value(double value) {
 	if (!m) return;
 	m->auto_observer_enabled = value != 0.0;
 	if (m->auto_observer_enabled) {
-		m->observer_initialized = false;
-		m->observer_last_moved = 0;
-		m->observer_last_moved_priority = 0;
-		m->observer_last_frame_seen = -1;
-		m->observer_focus_position = {};
-		m->observer_current_camera_position = {};
-		m->observer_focus_unit_id = {};
-		m->observer_follow_unit = false;
-		m->observer_unit_health.clear();
+		m->reset_observer_runtime_state();
 	}
+}
+
+extern "C" double fog_of_war_get_value() {
+	if (!m) return 0.0;
+	return m->fog_of_war_enabled ? 1.0 : 0.0;
+}
+
+extern "C" void fog_of_war_set_value(double value) {
+	if (!m) return;
+	m->fog_of_war_enabled = value != 0.0;
+	m->sync_fog_of_war();
+}
+
+extern "C" double fog_of_war_player_get_value(int player) {
+	if (!m) return 0.0;
+	if (player < 0 || player >= 12) return 0.0;
+	if (!m->is_occupied_player(player)) return 0.0;
+	if (!m->fog_of_war_player_mask_custom) return 1.0;
+	return (m->fog_of_war_player_mask & (1u << player)) ? 1.0 : 0.0;
+}
+
+extern "C" void fog_of_war_player_set_value(int player, double value) {
+	if (!m) return;
+	if (player < 0 || player >= 12) return;
+	if (!m->is_occupied_player(player)) return;
+	uint32_t occupied_mask = 0;
+	for (int owner = 0; owner != 12; ++owner) {
+		if (m->is_occupied_player(owner)) occupied_mask |= 1u << owner;
+	}
+	if (!occupied_mask) return;
+	uint32_t mask = m->fog_of_war_player_mask_custom ? m->fog_of_war_player_mask : occupied_mask;
+	if (value != 0.0) mask |= 1u << player;
+	else mask &= ~(1u << player);
+	m->fog_of_war_player_mask = mask;
+	m->fog_of_war_player_mask_custom = true;
+	m->sync_fog_of_war();
+}
+
+extern "C" double force_red_blue_colors_get_value() {
+	if (!m) return 0.0;
+	return m->force_red_blue_player_colors ? 1.0 : 0.0;
+}
+
+extern "C" void force_red_blue_colors_set_value(double value) {
+	if (!m) return;
+	m->force_red_blue_player_colors = value != 0.0;
 }
 
 #include <emscripten/bind.h>
@@ -806,6 +802,7 @@ struct util_functions: state_functions {
 			o.set("id", val((int)i));
 			o.set("icon", val(get_upgrade_type((UpgradeTypes)i)->icon));
 			o.set("level", val(level));
+			o.set("max_level", val(get_upgrade_type((UpgradeTypes)i)->max_level));
 			r.set(n++, o);
 		}
 		return r;
@@ -833,6 +830,7 @@ struct util_functions: state_functions {
 				o.set("id", val((int)u->building.upgrading_type->id));
 				o.set("icon", val((int)u->building.upgrading_type->icon));
 				o.set("level", val(u->building.upgrading_level));
+				o.set("max_level", val(u->building.upgrading_type->max_level));
 				o.set("remaining_time", val(u->building.upgrade_research_time));
 				o.set("total_time", val(upgrade_time_cost(owner, u->building.upgrading_type)));
 				r.set(i++, o);
@@ -923,7 +921,7 @@ extern "C" double player_get_value(int player, int index) {
 	case 0:
 		return m->ui.st.players.at(player).controller == player_t::controller_occupied ? 1 : 0;
 	case 1:
-		return (double)m->ui.st.players.at(player).color;
+		return (double)m->display_player_color(player);
 	case 2:
 		return (double)(uintptr_t)m->ui.replay_st.player_name.at(player).data();
 	case 3:

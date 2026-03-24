@@ -564,9 +564,12 @@ struct ui_functions: ui_util_functions {
 
 	xy screen_pos;
 	uint32_t vision = 0;
+	bool force_full_fog = false;
 
 	size_t screen_width;
 	size_t screen_height;
+	size_t minimap_reference_width = 0;
+	size_t minimap_reference_height = 0;
 
 	game_player player;
 	replay_state current_replay_state;
@@ -785,7 +788,7 @@ struct ui_functions: ui_util_functions {
 		{
 			for (size_t tile_x = screen_tile.from.x; tile_x != screen_tile.to.x; ++tile_x)
 			{
-				if (vision && (~tile->visible & vision) == 0)
+				if (force_full_fog || (vision && (tile->visible & vision) == vision))
 				{
 					int screen_x = tile_x * 32 - screen_pos.x;
 					int screen_y = tile_y * 32 - screen_pos.y;
@@ -1034,6 +1037,8 @@ struct ui_functions: ui_util_functions {
 
 	a_vector<const unit_t*> current_selection_sprites_set = a_vector<const unit_t*>(2500);
 	a_vector<const sprite_t*> current_selection_sprites;
+	a_vector<const unit_t*> status_bar_sprites_set = a_vector<const unit_t*>(2500);
+	a_vector<const sprite_t*> status_bar_sprites;
 
 	void draw_selection_circle(const sprite_t* sprite, const unit_t* u, uint8_t* data, size_t data_pitch) {
 		auto* image_type = get_image_type((ImageTypes)((int)ImageTypes::IMAGEID_Selection_Circle_22pixels + sprite->sprite_type->selection_circle));
@@ -1258,7 +1263,8 @@ struct ui_functions: ui_util_functions {
 
 	void draw_sprite(const sprite_t* sprite, uint8_t* data, size_t data_pitch) {
 		const unit_t* draw_selection_u = current_selection_sprites_set.at(sprite->index);
-		const unit_t* draw_health_bars_u = draw_selection_u;
+		const unit_t* draw_health_bars_u = status_bar_sprites_set.at(sprite->index);
+		if (!draw_health_bars_u) draw_health_bars_u = draw_selection_u;
 		for (auto* image : ptr(reverse(sprite->images))) {
 			if (i_flag(image, image_t::flag_hidden)) continue;
 			if (draw_selection_u && image->modifier != 10) {
@@ -1267,7 +1273,14 @@ struct ui_functions: ui_util_functions {
 			}
 			draw_image(image, data, data_pitch, st.players[sprite->owner].color);
 		}
-		if (draw_health_bars_u && !u_invincible(draw_health_bars_u)) {
+		auto should_draw_status_bars = [&](const unit_t* u) {
+			if (!u) return false;
+			if (u->hp.ceil().integer_part() < u->unit_type->hitpoints.integer_part()) return true;
+			if (u->unit_type->has_shield && u->shield_points.ceil().integer_part() < (int)u->unit_type->shield_points) return true;
+			if (ut_has_energy(u) && u->energy.integer_part() > 0) return true;
+			return false;
+		};
+		if (draw_health_bars_u && !u_invincible(draw_health_bars_u) && should_draw_status_bars(draw_health_bars_u)) {
 			draw_health_bars(sprite, draw_health_bars_u, data, data_pitch);
 		}
 	}
@@ -1303,6 +1316,16 @@ struct ui_functions: ui_util_functions {
 			current_selection_sprites_set.at(u->sprite->index) = u;
 			current_selection_sprites.push_back(u->sprite);
 		}
+		for (auto* u : ptr(st.visible_units)) {
+			if (!u || !u->sprite) continue;
+			status_bar_sprites_set.at(u->sprite->index) = u;
+			status_bar_sprites.push_back(u->sprite);
+		}
+		for (auto* u : ptr(st.hidden_units)) {
+			if (!u || !u->sprite) continue;
+			status_bar_sprites_set.at(u->sprite->index) = u;
+			status_bar_sprites.push_back(u->sprite);
+		}
 
 		for (auto& v : sorted_sprites) {
 			draw_sprite(v.second, data, data_pitch);
@@ -1312,6 +1335,10 @@ struct ui_functions: ui_util_functions {
 			current_selection_sprites_set.at(s->index) = nullptr;
 		}
 		current_selection_sprites.clear();
+		for (auto* s : status_bar_sprites) {
+			status_bar_sprites_set.at(s->index) = nullptr;
+		}
+		status_bar_sprites.clear();
 	}
 
 	void fill_rectangle(uint8_t* data, size_t data_pitch, rect area, uint8_t index) {
@@ -1384,6 +1411,10 @@ struct ui_functions: ui_util_functions {
 		} else if (game_st.map_height < game_st.map_width) {
 			minimap_height = minimap_height * minimap_height * game_st.map_tile_height / (minimap_width* game_st.map_tile_width);
 		}
+		size_t reference_width = minimap_reference_width ? minimap_reference_width : screen_width;
+		size_t reference_height = minimap_reference_height ? minimap_reference_height : screen_height;
+		minimap_width = std::max<size_t>(1, minimap_width * screen_width / std::max<size_t>(reference_width, 1));
+		minimap_height = std::max<size_t>(1, minimap_height * screen_height / std::max<size_t>(reference_height, 1));
 		if (screen_width < minimap_width || screen_height < minimap_height) return {};
 		int map_screen_x = 4;
 		int map_screen_y = screen_height - 4 - minimap_height;
@@ -1397,28 +1428,29 @@ struct ui_functions: ui_util_functions {
 		auto area = get_minimap_area();
 		size_t minimap_width = area.to.x - area.from.x;
 		size_t minimap_height = area.to.y - area.from.y;
-		if (minimap_width != game_st.map_tile_width) return;
-		if (minimap_height != game_st.map_tile_height) return;
+		if (!minimap_width || !minimap_height) return;
 		fill_rectangle(data, data_pitch, area, 0);
 		line_rectangle(data, data_pitch, {area.from - xy(1, 1), area.to + xy(1, 1)}, 0);
 
 		uint8_t* p = data + data_pitch * (size_t)area.from.y + (size_t)area.from.x;
 		uint8_t *dark = &tileset_img.dark_pcx.data[256 * 18];
 
-		size_t pitch = data_pitch - game_st.map_tile_width;
-		for (size_t y = 0; y != game_st.map_tile_height; ++y) {
-			for (size_t x = 0; x != game_st.map_tile_width; ++x) {
+		size_t pitch = data_pitch - minimap_width;
+		for (size_t y = 0; y != minimap_height; ++y) {
+			size_t tile_y = std::min(game_st.map_tile_height - 1, y * game_st.map_tile_height / minimap_height);
+			for (size_t x = 0; x != minimap_width; ++x) {
+				size_t tile_x = std::min(game_st.map_tile_width - 1, x * game_st.map_tile_width / minimap_width);
 				size_t index;
-				tile_t &tile = st.tiles[y * game_st.map_tile_width + x];
+				tile_t &tile = st.tiles[tile_y * game_st.map_tile_width + tile_x];
 				if (~tile.flags & tile_t::flag_has_creep)
-					index = st.tiles_mega_tile_index[y * game_st.map_tile_width + x];
-				else index = game_st.cv5.at(1).mega_tile_index[creep_random_tile_indices[y * game_st.map_tile_width + x]];
+					index = st.tiles_mega_tile_index[tile_y * game_st.map_tile_width + tile_x];
+				else index = game_st.cv5.at(1).mega_tile_index[creep_random_tile_indices[tile_y * game_st.map_tile_width + tile_x]];
 				auto* images = &tileset_img.vx4.at(index).images[0];
 				auto* bitmap = &tileset_img.vr4.at(*images / 2).bitmap[0];
 				auto val = bitmap[55 / sizeof(vr4_entry::bitmap_t)];
 				size_t shift = 8 * (55 % sizeof(vr4_entry::bitmap_t));
 				val >>= shift;
-				*p++ = (vision && (~tile.visible & vision) == 0) ? dark[(uint8_t)val] : (uint8_t)val;
+				*p++ = (force_full_fog || (vision && (tile.visible & vision) == vision)) ? dark[(uint8_t)val] : (uint8_t)val;
 			}
 			p += pitch;
 		}
@@ -1440,15 +1472,24 @@ struct ui_functions: ui_util_functions {
 				if (w < 2) w = 2;
 				if (h < 2) h = 2;
 				rect unit_area;
-				unit_area.from = area.from + (u->sprite->position - u->unit_type->placement_size / 2) / 32u;
-				unit_area.to = unit_area.from + xy(w, h);
+				auto unit_from = u->sprite->position - u->unit_type->placement_size / 2;
+				unit_area.from = area.from + xy(
+					(int)((int64_t)unit_from.x * (int64_t)minimap_width / std::max<size_t>(game_st.map_width, 1)),
+					(int)((int64_t)unit_from.y * (int64_t)minimap_height / std::max<size_t>(game_st.map_height, 1)));
+				unit_area.to = unit_area.from + xy(
+					std::max(1, (int)((int64_t)w * (int64_t)minimap_width / std::max<size_t>(game_st.map_tile_width, 1))),
+					std::max(1, (int)((int64_t)h * (int64_t)minimap_height / std::max<size_t>(game_st.map_tile_height, 1))));
 				fill_rectangle(data, data_pitch, unit_area, color);
 			}
 		}
 
 		rect view_rect;
-		view_rect.from = area.from + xy(screen_pos.x / 32u, screen_pos.y / 32u);
-		view_rect.to = view_rect.from + xy((view_width + 31) / 32u, (view_height + 31) / 32u);
+		view_rect.from = area.from + xy(
+			(int)((int64_t)screen_pos.x * (int64_t)minimap_width / std::max<size_t>(game_st.map_width, 1)),
+			(int)((int64_t)screen_pos.y * (int64_t)minimap_height / std::max<size_t>(game_st.map_height, 1)));
+		view_rect.to = view_rect.from + xy(
+			std::max(1, (int)((int64_t)view_width * (int64_t)minimap_width / std::max<size_t>(game_st.map_width, 1))),
+			std::max(1, (int)((int64_t)view_height * (int64_t)minimap_height / std::max<size_t>(game_st.map_height, 1))));
 		line_rectangle(data, data_pitch, view_rect, 255);
 
 	}
@@ -1707,6 +1748,8 @@ struct ui_functions: ui_util_functions {
 		if (!wnd && create_window) wnd.create("OpenBW", 0, 0, width, height);
 		screen_width = width;
 		screen_height = height;
+		if (!minimap_reference_width) minimap_reference_width = width;
+		if (!minimap_reference_height) minimap_reference_height = height;
 		//view_scale = fp16::integer(1) - (fp16::integer(1) / 4);
 		view_scale = fp16::integer(1);
 		view_width = (fp16::integer(screen_width) / view_scale).integer_part();
@@ -1715,6 +1758,11 @@ struct ui_functions: ui_util_functions {
 		window_surface.reset();
 		indexed_surface.reset();
 		rgba_surface.reset();
+	}
+
+	void set_minimap_reference_size(int width, int height) {
+		if (width > 0) minimap_reference_width = (size_t)width;
+		if (height > 0) minimap_reference_height = (size_t)height;
 	}
 
 	a_vector<unit_id> current_selection;
@@ -2116,4 +2164,3 @@ struct ui_functions: ui_util_functions {
 };
 
 }
-

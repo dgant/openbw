@@ -28,7 +28,7 @@ em++ -std=c++14 \
   -s SDL2_IMAGE_FORMATS="['png']" -s DISABLE_EXCEPTION_CATCHING=1 -s ASSERTIONS=0 -s ABORTING_MALLOC=0 \
   -s DISABLE_DEPRECATED_FIND_EVENT_TARGET_BEHAVIOR=1 \
   -s EXTRA_EXPORTED_RUNTIME_METHODS="['callMain']" \
-  -s EXPORTED_FUNCTIONS="['_main','_ui_resize','_replay_get_value','_replay_set_value','_observer_get_value','_observer_set_value','_player_get_value','_load_replay']" \
+  -s EXPORTED_FUNCTIONS="['_main','_ui_resize','_ui_can_resize','_ui_set_minimap_reference_size','_ui_get_screen_pos','_ui_set_screen_center','_ui_set_screen_center_manual','_replay_get_value','_replay_set_value','_observer_get_value','_observer_get_mode','_observer_set_mode','_observer_set_value','_fog_of_war_get_value','_fog_of_war_set_value','_fog_of_war_player_get_value','_fog_of_war_player_set_value','_force_red_blue_colors_get_value','_force_red_blue_colors_set_value','_player_get_value','_load_replay']" \
   -o openbw.html \
   openbw/ui/sdl2.cpp openbw/ui/gfxtest.cpp dlmalloc/malloc.c
 popd >/dev/null
