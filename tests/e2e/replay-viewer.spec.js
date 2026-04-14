@@ -946,9 +946,12 @@ test("export button records a WebM download flow", async ({ page }) => {
   await page.fill("#export-height", "720");
   await page.fill("#export-fps", "30");
   await page.fill("#export-bitrate", "16.5");
-  await expect(page.locator("#export-settings-save")).toBeVisible();
+  await expect(page.locator("#export-settings-save")).toHaveCount(0);
   await expect(page.locator("#export-settings-reset")).toContainText("Reset");
-  await page.click("#export-settings-save");
+  await expect
+    .poll(() => page.evaluate(() => JSON.parse(localStorage.exportSettings || "{}")))
+    .toEqual({ width: 1280, height: 720, fps: 30, videoBitrateMbps: 16.5 });
+  await page.click("#export_settings .close-button");
   await expect(page.locator("#export_settings")).toBeHidden();
 
   await page.click("#rv-rc-play");
@@ -1019,7 +1022,7 @@ test("clip HUD buttons match the floating HUD style and export resize stays cent
   await page.click("#rv-rc-export-settings");
   await page.fill("#export-width", "1280");
   await page.fill("#export-height", "720");
-  await page.click("#export-settings-save");
+  await page.click("#export_settings .close-button");
 
   const before = await page.evaluate(() => {
     const area = document.querySelector("#canvas-area").getBoundingClientRect();
@@ -1064,16 +1067,48 @@ test("clip HUD buttons match the floating HUD style and export resize stays cent
   assertCleanLogs(logs);
 });
 
-test("video clip settings modal uses the requested copy and button styling", async ({ page }) => {
+test("settings modal uses audio and video tabs with immediate persistence", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
   await loadReplay(page);
+  await page.click("#rv-rc-music");
   await page.click("#rv-rc-export-settings");
-  await expect(page.locator("#export_settings h3")).toHaveText("Video clip settings");
+  await expect(page.locator("#export_settings h3")).toHaveText("Settings");
   await expect(page.locator("#export_settings p")).toHaveCount(0);
-  await expect(page.locator("#export-settings-save")).toHaveClass(/success/);
   await expect(page.locator("#export-settings-reset")).toHaveClass(/success/);
+  await expect(page.locator("#settings-tab-video")).toHaveClass(/is-active/);
+  await page.click("#settings-tab-audio");
+  await expect(page.locator("#settings-tab-audio")).toHaveClass(/is-active/);
+  await expect(page.locator('[data-settings-panel="audio"]')).toBeVisible();
+  await expect(page.locator('[data-settings-panel="video"]')).toBeHidden();
+  await page.fill("#audio-overall-slider", "25");
+  await page.dispatchEvent("#audio-overall-slider", "input");
+  await page.fill("#audio-music-slider", "40");
+  await page.dispatchEvent("#audio-music-slider", "input");
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        volume: JSON.parse(localStorage.volumeSettings || "{}"),
+        audioSettings: JSON.parse(localStorage.audioCategorySettings || "{}"),
+        musicVolume: window.musicState && window.musicState.audio ? window.musicState.audio.volume : null
+      }))
+    )
+    .toEqual({
+      volume: { level: 0.25, muted: false },
+      audioSettings: {
+        combat: { enabled: true, level: 1 },
+        acknowledgements: { enabled: true, level: 1 },
+        music: { enabled: true, level: 0.4 }
+      },
+      musicVolume: 0.1
+    });
+  await page.click("#settings-tab-video");
+  await expect(page.locator('[data-settings-panel="video"]')).toBeVisible();
+  await expect(page.locator('[data-settings-panel="audio"]')).toBeHidden();
   await expect(page.locator("#export-width")).toHaveJSProperty("value", "1280");
+  await expect
+    .poll(() => page.evaluate(() => localStorage.settingsModalTab))
+    .toBe("video");
 
   await expect
     .poll(() =>
@@ -1112,6 +1147,10 @@ test("video clip settings modal uses the requested copy and button styling", asy
       page.evaluate(() => parseFloat(getComputedStyle(document.querySelector("#export_settings .input-group .input-group-label:last-child")).width))
     )
     .toBeGreaterThan(15);
+  await page.click("#export_settings .close-button");
+  await page.click("#rv-rc-export-settings");
+  await expect(page.locator("#settings-tab-video")).toHaveClass(/is-active/);
+  await expect(page.locator('[data-settings-panel="video"]')).toBeVisible();
 
   assertCleanLogs(logs);
 });
