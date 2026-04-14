@@ -908,6 +908,10 @@ int get_primary_perspective_player() {
 	return m->ui.primary_perspective_player_index;
 }
 
+int get_acknowledgement_play_count() {
+	return m->ui.acknowledgement_play_count;
+}
+
 EMSCRIPTEN_BINDINGS(openbw) {
 	register_vector<js_unit>("vector_js_unit");
 	class_<util_functions>("util_functions")
@@ -931,6 +935,7 @@ EMSCRIPTEN_BINDINGS(openbw) {
 	function("get_acknowledgement_volume", &get_acknowledgement_volume);
 	function("set_primary_perspective_player", &set_primary_perspective_player);
 	function("get_primary_perspective_player", &get_primary_perspective_player);
+	function("get_acknowledgement_play_count", &get_acknowledgement_play_count);
 
 	class_<unit_type_t>("unit_type_t")
 		.property("id", &unit_type_t_id)

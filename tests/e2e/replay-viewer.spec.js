@@ -1202,6 +1202,28 @@ test("music playlist uses the first player's race only", async ({ page }) => {
   assertCleanLogs(logs);
 });
 
+test("first-player acknowledgement sounds actually trigger during playback", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+  await page.mouse.click(50, 50);
+  await page.evaluate(() => {
+    _replay_set_value(1, 0);
+    _replay_set_value(0, 16);
+  });
+  await page.waitForTimeout(20000);
+  const ackState = await page.evaluate(() => ({
+    frame: _replay_get_value(2),
+    primary: typeof Module.get_primary_perspective_player === "function" ? Module.get_primary_perspective_player() : null,
+    ackCount: typeof Module.get_acknowledgement_play_count === "function" ? Module.get_acknowledgement_play_count() : null
+  }));
+  expect(ackState.primary).toBe(0);
+  expect(ackState.frame).toBeGreaterThan(0);
+  expect(ackState.ackCount).toBeGreaterThan(0);
+
+  assertCleanLogs(logs);
+});
+
 test("loading a replay from URL uses the home screen instead of the status modal", async ({ page }) => {
   const logs = await createLogCollectors(page);
 

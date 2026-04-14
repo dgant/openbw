@@ -595,6 +595,7 @@ struct ui_functions: ui_util_functions {
 	int combat_volume = 100;
 	int acknowledgement_volume = 100;
 	int primary_perspective_player_index = -1;
+	int acknowledgement_play_count = 0;
 	std::array<int, 12> last_base_under_attack_frame{};
 	std::array<int, 12> last_forces_under_attack_frame{};
 
@@ -691,6 +692,7 @@ struct ui_functions: ui_util_functions {
 		const sound_type_t* sound_type = get_sound_type((Sounds)id);
 
 		int volume = sound_type->min_volume;
+		if (!positional) volume = 100;
 
 		if (positional && position != xy()) {
 			int distance = 0;
@@ -740,6 +742,9 @@ struct ui_functions: ui_util_functions {
 			auto* c = get_sound_channel(sound_type->priority);
 			if (c) {
 				native_sound::play(c - sound_channels.data(), &*s, (128 - 4) * (volume * group_volume(mix_group) / 100) * global_volume / 10000, pan);
+				if (mix_group == sound_mix_group_acknowledgement) {
+					++acknowledgement_play_count;
+				}
 				c->playing = true;
 				c->sound_type = sound_type;
 				c->flags = sound_type->flags;
