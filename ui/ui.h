@@ -592,6 +592,16 @@ struct ui_functions: ui_util_functions {
 	a_vector<std::chrono::high_resolution_clock::time_point> last_played_sound;
 
 	int global_volume = 50;
+	int combat_volume = 100;
+	int acknowledgement_volume = 100;
+	int primary_perspective_player_index = -1;
+	std::array<int, 12> last_base_under_attack_frame{};
+	std::array<int, 12> last_forces_under_attack_frame{};
+
+	enum sound_mix_group {
+		sound_mix_group_combat,
+		sound_mix_group_acknowledgement
+	};
 
 	struct sound_channel {
 		bool playing = false;
@@ -600,17 +610,43 @@ struct ui_functions: ui_util_functions {
 		int flags = 0;
 		const unit_type_t* unit_type = nullptr;
 		int volume = 0;
+		sound_mix_group mix_group = sound_mix_group_combat;
 	};
 	a_vector<sound_channel> sound_channels;
+
+	int group_volume(sound_mix_group group) const {
+		return group == sound_mix_group_acknowledgement ? acknowledgement_volume : combat_volume;
+	}
+
+	void apply_channel_volume(sound_channel& c) {
+		if (!c.playing) return;
+		native_sound::set_volume(&c - sound_channels.data(), (128 - 4) * (c.volume * group_volume(c.mix_group) / 100) * global_volume / 10000);
+	}
 
 	void set_volume(int volume) {
 		if (volume < 0) volume = 0;
 		else if (volume > 100) volume = 100;
 		global_volume = volume;
 		for (auto& c : sound_channels) {
-			if (c.playing) {
-				native_sound::set_volume(&c - sound_channels.data(), (128 - 4) * (c.volume * global_volume / 100) / 100);
-			}
+			apply_channel_volume(c);
+		}
+	}
+
+	void set_combat_volume(int volume) {
+		if (volume < 0) volume = 0;
+		else if (volume > 100) volume = 100;
+		combat_volume = volume;
+		for (auto& c : sound_channels) {
+			if (c.mix_group == sound_mix_group_combat) apply_channel_volume(c);
+		}
+	}
+
+	void set_acknowledgement_volume(int volume) {
+		if (volume < 0) volume = 0;
+		else if (volume > 100) volume = 100;
+		acknowledgement_volume = volume;
+		for (auto& c : sound_channels) {
+			if (c.mix_group == sound_mix_group_acknowledgement) apply_channel_volume(c);
 		}
 	}
 
@@ -636,9 +672,8 @@ struct ui_functions: ui_util_functions {
 		return r;
 	}
 
-	virtual void play_sound(int id, xy position, const unit_t* source_unit, bool add_race_index) override {
-		if (global_volume == 0) return;
-		if (add_race_index) id += 1;
+	void play_sound_internal(int id, xy position, const unit_t* source_unit, sound_mix_group mix_group, bool positional) {
+		if (global_volume == 0 || group_volume(mix_group) == 0) return;
 		if ((size_t)id >= has_loaded_sound.size()) return;
 		if (!has_loaded_sound[id]) {
 			has_loaded_sound[id] = true;
@@ -657,7 +692,7 @@ struct ui_functions: ui_util_functions {
 
 		int volume = sound_type->min_volume;
 
-		if (position != xy()) {
+		if (positional && position != xy()) {
 			int distance = 0;
 			if (position.x < screen_pos.x) distance += screen_pos.x - position.x;
 			else if (position.x > screen_pos.x + (int)screen_width) distance += position.x - (screen_pos.x + (int)screen_width);
@@ -704,15 +739,39 @@ struct ui_functions: ui_util_functions {
 
 			auto* c = get_sound_channel(sound_type->priority);
 			if (c) {
-				native_sound::play(c - sound_channels.data(), &*s, (128 - 4) * (volume * global_volume / 100) / 100, pan);
+				native_sound::play(c - sound_channels.data(), &*s, (128 - 4) * (volume * group_volume(mix_group) / 100) * global_volume / 10000, pan);
 				c->playing = true;
 				c->sound_type = sound_type;
 				c->flags = sound_type->flags;
 				c->priority = sound_type->priority;
 				c->unit_type = unit_type;
 				c->volume = volume;
+				c->mix_group = mix_group;
 			}
 		}
+	}
+
+	virtual int primary_perspective_player() const override {
+		return primary_perspective_player_index;
+	}
+
+	virtual void play_sound(int id, xy position, const unit_t* source_unit, bool add_race_index) override {
+		if (add_race_index) id += 1;
+		play_sound_internal(id, position, source_unit, sound_mix_group_combat, true);
+	}
+
+	virtual void play_acknowledgement_sound(int id, const unit_t* source_unit = nullptr) override {
+		if (st.current_frame != replay_frame) return;
+		play_sound_internal(id, xy(), source_unit, sound_mix_group_acknowledgement, false);
+	}
+
+	virtual void notify_player_under_attack(int owner, bool is_base) override {
+		if (st.current_frame != replay_frame) return;
+		if (owner != primary_perspective_player_index) return;
+		auto& last_frame = is_base ? last_base_under_attack_frame[owner] : last_forces_under_attack_frame[owner];
+		if (st.current_frame - last_frame < 24 * 4) return;
+		last_frame = st.current_frame;
+		play_acknowledgement_race_sound(is_base ? 117 : 120, owner);
 	}
 
 	a_vector<uint8_t> creep_random_tile_indices = a_vector<uint8_t>(256 * 256);
@@ -747,6 +806,8 @@ struct ui_functions: ui_util_functions {
 		native_sound::init();
 
 		sound_channels.resize(8);
+		last_base_under_attack_frame.fill(-(24 * 4));
+		last_forces_under_attack_frame.fill(-(24 * 4));
 
 		load_data_file(images_tbl.data, "arr/images.tbl");
 

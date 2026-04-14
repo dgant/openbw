@@ -1076,6 +1076,7 @@ test("settings modal uses audio and video tabs with immediate persistence", asyn
   await expect(page.locator("#export_settings h3")).toHaveText("Settings");
   await expect(page.locator("#export_settings p")).toHaveCount(0);
   await expect(page.locator("#export-settings-reset")).toHaveClass(/success/);
+  await expect(page.locator("#audio-settings-reset")).toHaveClass(/success/);
   await expect(page.locator("#settings-tab-video")).toHaveClass(/is-active/);
   await page.click("#settings-tab-audio");
   await expect(page.locator("#settings-tab-audio")).toHaveClass(/is-active/);
@@ -1101,6 +1102,34 @@ test("settings modal uses audio and video tabs with immediate persistence", asyn
         music: { enabled: true, level: 0.4 }
       },
       musicVolume: 0.1
+    });
+  await page.click("#audio-settings-reset");
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        volume: JSON.parse(localStorage.volumeSettings || "{}"),
+        audioSettings: JSON.parse(localStorage.audioCategorySettings || "{}"),
+        soundClass: document.querySelector("#audio-overall-toggle")?.className || "",
+        runtime: {
+          overall: typeof Module.get_volume === "function" ? Module.get_volume() : null,
+          combat: typeof Module.get_combat_volume === "function" ? Module.get_combat_volume() : null,
+          acknowledgements: typeof Module.get_acknowledgement_volume === "function" ? Module.get_acknowledgement_volume() : null
+        }
+      }))
+    )
+    .toEqual({
+      volume: { level: 0.5, muted: false },
+      audioSettings: {
+        combat: { enabled: true, level: 1 },
+        acknowledgements: { enabled: true, level: 1 },
+        music: { enabled: true, level: 0.25 }
+      },
+      soundClass: expect.stringContaining("rv-rc-sound"),
+      runtime: {
+        overall: 0.5,
+        combat: 1,
+        acknowledgements: 1
+      }
     });
   await page.click("#settings-tab-video");
   await expect(page.locator('[data-settings-panel="video"]')).toBeVisible();
@@ -1151,6 +1180,24 @@ test("settings modal uses audio and video tabs with immediate persistence", asyn
   await page.click("#rv-rc-export-settings");
   await expect(page.locator("#settings-tab-video")).toHaveClass(/is-active/);
   await expect(page.locator('[data-settings-panel="video"]')).toBeVisible();
+
+  assertCleanLogs(logs);
+});
+
+test("music playlist uses the first player's race only", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+  await page.click("#rv-rc-music");
+  await expect.poll(() => page.evaluate(() => (window.musicState ? window.musicState.playlist.length : 0))).toBe(4);
+  const playlistState = await page.evaluate(() => ({
+    firstPlayerRace: _player_get_value(players[0], C_RACE),
+    playlist: window.musicState ? window.musicState.playlist.slice() : []
+  }));
+  const racePrefix = ["Zerg", "Terran", "Protoss"][playlistState.firstPlayerRace];
+  expect(playlistState.playlist).toHaveLength(4);
+  expect(playlistState.playlist.every((url) => url.includes(racePrefix))).toBe(true);
+  expect(playlistState.playlist.some((url) => /Protoss|Terran|Zerg/.test(url) && !url.includes(racePrefix))).toBe(false);
 
   assertCleanLogs(logs);
 });

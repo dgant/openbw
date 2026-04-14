@@ -435,6 +435,16 @@ std::unique_ptr<sound> load_wav(const void* data, size_t size) {
 EM_JS(void, openbw_audio_init_js, (), {
 	if (typeof Module.__openbwSounds === 'undefined') Module.__openbwSounds = [];
 	if (typeof Module.__openbwChannels === 'undefined') Module.__openbwChannels = [];
+	if (typeof Module.__openbwAudioUnlocked === 'undefined') Module.__openbwAudioUnlocked = false;
+	if (!Module.__openbwAudioUnlockHandlersInstalled) {
+		var unlock = function() {
+			Module.__openbwAudioUnlocked = true;
+		};
+		window.addEventListener('pointerdown', unlock, true);
+		window.addEventListener('keydown', unlock, true);
+		window.addEventListener('touchstart', unlock, true);
+		Module.__openbwAudioUnlockHandlersInstalled = true;
+	}
 });
 
 EM_JS(int, openbw_audio_load_wav_js, (const void* data, int size), {
@@ -456,6 +466,7 @@ EM_JS(void, openbw_audio_free_wav_js, (int handle), {
 });
 
 EM_JS(void, openbw_audio_play_js, (int channel, int sound_handle, int volume), {
+	if (!Module.__openbwAudioUnlocked) return;
 	var sounds = Module.__openbwSounds || [];
 	var sound = sounds[sound_handle];
 	if (!sound || !sound.url) return;

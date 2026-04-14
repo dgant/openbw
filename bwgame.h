@@ -331,9 +331,24 @@ struct state : state_base_copyable, state_base_non_copyable {
 
 struct state_functions {
 
+	virtual int primary_perspective_player() const {
+		return -1;
+	}
 	virtual void play_sound(int id, xy position, const unit_t* source_unit = nullptr, bool add_race_index = false) {
 		std::cout <<  "state_functions" << std::endl;
 	}
+	virtual void play_acknowledgement_sound(int id, const unit_t* source_unit = nullptr) {
+		play_sound(id, xy(), source_unit, false);
+	}
+	virtual void play_acknowledgement_race_sound(int base_id, int owner, const unit_t* source_unit = nullptr) {
+		int race_offset = 0;
+		if (owner >= 0 && owner < 12) {
+			if (st.players[owner].race == race_t::terran) race_offset = 1;
+			else if (st.players[owner].race == race_t::protoss) race_offset = 2;
+		}
+		play_acknowledgement_sound(base_id + race_offset, source_unit);
+	}
+	virtual void notify_player_under_attack(int owner, bool is_base) {}
 	virtual void on_unit_deselect(unit_t* u) {}
 
 	virtual void on_unit_destroy(unit_t* u) {}
@@ -5305,7 +5320,9 @@ struct state_functions {
 			return;
 		}
 		if (u->building.upgrade_research_time-- == 0 || player_has_researched(u->owner, tech->id) || st.cheat_operation_cwal) {
-			// todo: callback for sound
+			if (u->owner == primary_perspective_player()) {
+				play_acknowledgement_race_sound(123, u->owner, u);
+			}
 			st.tech_researched[u->owner][tech->id] = true;
 			done();
 		}
@@ -5326,7 +5343,9 @@ struct state_functions {
 		}
 		bool already_upgraded = player_upgrade_level(u->owner, upgrade->id) >= u->building.upgrading_level;
 		if (u->building.upgrade_research_time-- == 0 || already_upgraded || st.cheat_operation_cwal) {
-			// todo: callback for sound
+			if (u->owner == primary_perspective_player()) {
+				play_acknowledgement_race_sound(131, u->owner, u);
+			}
 			if (!already_upgraded && player_max_upgrade_level(u->owner, upgrade->id) >= u->building.upgrading_level) {
 				st.upgrade_levels[u->owner][upgrade->id] = u->building.upgrading_level;
 				apply_upgrades_to_player_units(u->owner);
@@ -6178,7 +6197,9 @@ struct state_functions {
 			u->order_state = 1;
 		} else if (u->order_state == 1) {
 			if (u->main_order_timer <= 45 || unit_is_at_move_target(u)) {
-				play_sound(127, true);
+				if (primary_perspective_player() >= 0) {
+					play_acknowledgement_race_sound(127, primary_perspective_player(), u);
+				}
 				// todo: callback for message
 				u->order_state = 2;
 			}
@@ -13627,7 +13648,7 @@ struct state_functions {
 				update_unit_damage_overlay(u);
 			}
 			if (source_unit && source_unit->owner != u->owner && reveal_source) {
-				// todo: callback for notifications?
+				notify_player_under_attack(u->owner, ut_building(u));
 			}
 		} else {
 			if (unit_provides_space(u) && !ut_building(u)) {
@@ -13719,7 +13740,7 @@ struct state_functions {
 		if (source_unit) {
 			on_unit_damage(target, source_unit, weapon->id != WeaponTypes::Irradiate);
 			if (weapon->id != WeaponTypes::Irradiate && target->owner != source_unit->owner) {
-				// todo: callback for notifications?
+				notify_player_under_attack(target->owner, ut_building(target));
 			}
 			if (weapon->damage_type != weapon_type_t::damage_type_none) {
 				if (target->unit_type->has_shield && target->shield_points >= fp8::integer(1)) {
@@ -17207,6 +17228,9 @@ struct state_functions {
 		}
 		u->air_strength = get_unit_strength(u, false);
 		u->ground_strength = get_unit_strength(u, true);
+		if (!ut_building(u) && u->owner == primary_perspective_player() && u->unit_type->ready_sound >= 0) {
+			play_acknowledgement_sound(u->unit_type->ready_sound, u);
+		}
 	}
 
 	unit_t* create_initial_unit(const unit_type_t* unit_type, xy pos, int owner) {
