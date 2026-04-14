@@ -10,6 +10,9 @@
 #ifndef OPENBW_NO_SDL_MIXER
 #include "SDL_mixer.h"
 #endif
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #include <array>
 #include <cstdlib>
@@ -428,28 +431,136 @@ std::unique_ptr<sound> load_wav(const void* data, size_t size) {
 
 #else
 
+#ifdef __EMSCRIPTEN__
+EM_JS(void, openbw_audio_init_js, (), {
+	if (typeof Module.__openbwSounds === 'undefined') Module.__openbwSounds = [];
+	if (typeof Module.__openbwChannels === 'undefined') Module.__openbwChannels = [];
+});
+
+EM_JS(int, openbw_audio_load_wav_js, (const void* data, int size), {
+	if (typeof Module.__openbwSounds === 'undefined') Module.__openbwSounds = [];
+	var bytes = HEAPU8.slice(data, data + size);
+	var blob = new Blob([bytes], { type: 'audio/wav' });
+	var url = URL.createObjectURL(blob);
+	var handle = Module.__openbwSounds.length;
+	Module.__openbwSounds.push({ url: url });
+	return handle;
+});
+
+EM_JS(void, openbw_audio_free_wav_js, (int handle), {
+	var sounds = Module.__openbwSounds || [];
+	var sound = sounds[handle];
+	if (!sound) return;
+	if (sound.url) URL.revokeObjectURL(sound.url);
+	sounds[handle] = null;
+});
+
+EM_JS(void, openbw_audio_play_js, (int channel, int sound_handle, int volume), {
+	var sounds = Module.__openbwSounds || [];
+	var sound = sounds[sound_handle];
+	if (!sound || !sound.url) return;
+	var channels = Module.__openbwChannels || (Module.__openbwChannels = []);
+	var existing = channels[channel];
+	if (existing) {
+		existing.pause();
+		existing.currentTime = 0;
+	}
+	var audio = new Audio(sound.url);
+	audio.preload = 'auto';
+	audio.volume = Math.max(0, Math.min(1, volume / 128.0));
+	audio.onended = function() {
+		if (channels[channel] === audio) channels[channel] = null;
+	};
+	audio.onerror = function() {
+		if (channels[channel] === audio) channels[channel] = null;
+	};
+	channels[channel] = audio;
+	var playPromise = audio.play();
+	if (playPromise && typeof playPromise.catch === 'function') {
+		playPromise.catch(function() {
+			if (channels[channel] === audio) channels[channel] = null;
+		});
+	}
+});
+
+EM_JS(int, openbw_audio_is_playing_js, (int channel), {
+	var audio = (Module.__openbwChannels || [])[channel];
+	if (!audio) return 0;
+	return !audio.paused && !audio.ended ? 1 : 0;
+});
+
+EM_JS(void, openbw_audio_stop_js, (int channel), {
+	var channels = Module.__openbwChannels || [];
+	var audio = channels[channel];
+	if (!audio) return;
+	audio.pause();
+	audio.currentTime = 0;
+	channels[channel] = null;
+});
+
+EM_JS(void, openbw_audio_set_volume_js, (int channel, int volume), {
+	var audio = (Module.__openbwChannels || [])[channel];
+	if (!audio) return;
+	audio.volume = Math.max(0, Math.min(1, volume / 128.0));
+});
+#endif
+
 void init() {
+#ifdef __EMSCRIPTEN__
+	if (initialized) return;
+	initialized = true;
+	openbw_audio_init_js();
+#endif
 }
 
 struct sdl_sound: sound {
-	virtual ~sdl_sound() override {}
+	int handle = -1;
+	virtual ~sdl_sound() override {
+#ifdef __EMSCRIPTEN__
+		if (handle >= 0) openbw_audio_free_wav_js(handle);
+#endif
+	}
 };
 
 void play(int channel, sound* arg_s, int volume, int pan) {
+#ifdef __EMSCRIPTEN__
+	if (!initialized) init();
+	sdl_sound* s = (sdl_sound*)arg_s;
+	if (!s || s->handle < 0) return;
+	openbw_audio_play_js(channel, s->handle, volume);
+#endif
 }
 
 bool is_playing(int channel) {
+#ifdef __EMSCRIPTEN__
+	return openbw_audio_is_playing_js(channel) != 0;
+#else
 	return false;
+#endif
 }
 
 void stop(int channel) {
+#ifdef __EMSCRIPTEN__
+	openbw_audio_stop_js(channel);
+#endif
 }
 
 void set_volume(int channel, int volume) {
+#ifdef __EMSCRIPTEN__
+	openbw_audio_set_volume_js(channel, volume);
+#endif
 }
 
 std::unique_ptr<sound> load_wav(const void* data, size_t size) {
+#ifdef __EMSCRIPTEN__
+	if (!initialized) init();
+	auto r = std::make_unique<sdl_sound>();
+	r->handle = openbw_audio_load_wav_js(data, (int)size);
+	if (r->handle < 0) return nullptr;
+	return std::unique_ptr<sound>(r.release());
+#else
 	return nullptr;
+#endif
 }
 
 #endif

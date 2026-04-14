@@ -230,6 +230,10 @@ test("existing buttons and hotkeys work during replay playback", async ({ page }
   await page.click("#rv-rc-force-colors");
   await expect(page.locator("#rv-rc-force-colors")).not.toHaveClass(/is-enabled/);
   await expect.poll(() => page.evaluate(() => _force_red_blue_colors_get_value())).toBe(0);
+  await expect(page.locator("#rv-rc-music")).not.toHaveClass(/is-enabled/);
+  await page.click("#rv-rc-music");
+  await expect(page.locator("#rv-rc-music")).toHaveClass(/is-enabled/);
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.viewerToggleSettings || "{}").musicEnabled)).toBe(true);
 
   await expect(page.locator("#rv-rc-sound")).toHaveClass(/rv-rc-sound/);
   await page.keyboard.press("s");
@@ -300,11 +304,16 @@ test("existing buttons and hotkeys work during replay playback", async ({ page }
   }
   await expect.poll(() => page.evaluate(() => _replay_get_value(0))).toBe(1);
 
+  await expect(page.locator("#rv-rc-play")).toHaveClass(/rv-rc-pause/);
   await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(0);
   await page.click("#rv-rc-play");
   await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(1);
+  await expect(page.locator("#rv-rc-play")).toHaveClass(/rv-rc-play/);
+  await page.evaluate(() => _replay_set_value(1, 0));
+  await expect.poll(() => page.locator("#rv-rc-play").getAttribute("class")).toContain("rv-rc-pause");
   await page.keyboard.press("p");
-  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(0);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(1);
+  await expect(page.locator("#rv-rc-play")).toHaveClass(/rv-rc-play/);
 
   const frameBeforeJump = await page.evaluate(() => _replay_get_value(2));
   await page.keyboard.press("c");
@@ -381,13 +390,15 @@ test("existing buttons and hotkeys work during replay playback", async ({ page }
           ])
         );
         return {
-          sameTopZoomInObserver: metrics["zoom-in"].top === metrics["rv-rc-observer"].top,
           zoomColumnLeftAligned: metrics["zoom-in"].left === metrics["zoom-out"].left,
           controlColumnLeftAligned:
+            metrics["rv-rc-music"].left === metrics["rv-rc-force-colors"].left &&
             metrics["rv-rc-force-colors"].left === metrics["rv-rc-observer"].left &&
             metrics["rv-rc-observer"].left === metrics["rv-rc-fow"].left,
-          zoomLeftOfControls: metrics["zoom-in"].left < metrics["rv-rc-observer"].left,
+          zoomLeftOfControls: metrics["zoom-in"].left < metrics["rv-rc-music"].left,
+          musicAboveForceColors: metrics["rv-rc-music"].top < metrics["rv-rc-force-colors"].top,
           rightColumnStacks:
+            metrics["rv-rc-music"].top < metrics["rv-rc-force-colors"].top &&
             metrics["rv-rc-force-colors"].top < metrics["rv-rc-observer"].top &&
             metrics["rv-rc-observer"].top < metrics["rv-rc-fow"].top,
           zoomInAboveZoomOut: metrics["zoom-in"].top < metrics["zoom-out"].top,
@@ -396,10 +407,10 @@ test("existing buttons and hotkeys work during replay playback", async ({ page }
       })
     )
     .toEqual({
-      sameTopZoomInObserver: true,
       zoomColumnLeftAligned: true,
       controlColumnLeftAligned: true,
       zoomLeftOfControls: true,
+      musicAboveForceColors: true,
       rightColumnStacks: true,
       zoomInAboveZoomOut: true,
       bottomAligned: true
@@ -436,6 +447,37 @@ test("existing buttons and hotkeys work during replay playback", async ({ page }
     update_timer(_replay_get_value(2));
   });
   await expect(page.locator("#rv-rc-timer")).not.toHaveClass(/scrub-preview/);
+
+  assertCleanLogs(logs);
+});
+
+test("volume and mute settings persist across reloads", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await loadReplay(page);
+
+  await page.evaluate(() => {
+    volumeSettings.level = 0.27;
+    volumeSettings.muted = true;
+    localStorage.volumeSettings = JSON.stringify(volumeSettings);
+    Module.set_volume(0);
+  });
+  await page.reload();
+  await expect(page.locator("#rv_modal")).toBeHidden({ timeout: 30000 });
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        stored: JSON.parse(localStorage.volumeSettings || "{}"),
+        mutedClass: document.querySelector("#rv-rc-sound")?.className || "",
+        output: document.querySelector("#volumeOutput")?.value || ""
+      }))
+    )
+    .toEqual({
+      stored: { level: 0.27, muted: true },
+      mutedClass: expect.stringContaining("rv-rc-muted"),
+      output: "27"
+    });
 
   assertCleanLogs(logs);
 });
@@ -1261,6 +1303,30 @@ test("info dock fits full-size target counts and uses dynamic single-row scaling
   assertCleanLogs(logs);
 });
 
+test("upgrade strips switch to half-size wrapped layout at ten icons instead of continuing dynamic shrink", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.goto("/");
+  const scaleState = await page.evaluate(() => {
+    const host = document.createElement("div");
+    host.id = "upgrade_tab_content_test";
+    host.className = "info_tab_content";
+    Object.defineProperty(host, "clientWidth", { value: 191, configurable: true });
+    for (let i = 0; i < 14; ++i) {
+      const child = document.createElement("div");
+      host.appendChild(child);
+    }
+    document.body.appendChild(host);
+    apply_info_strip_scale($(host));
+    const scale = host.getAttribute("data-scale");
+    document.body.removeChild(host);
+    return scale;
+  });
+
+  expect(scaleState).toBe("2");
+  assertCleanLogs(logs);
+});
+
 test("viewer toggle settings persist across reload", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
@@ -1268,6 +1334,7 @@ test("viewer toggle settings persist across reload", async ({ page }) => {
   await page.click("#rv-rc-observer");
   await page.click("#rv-rc-fow");
   await page.click("#rv-rc-force-colors");
+  await page.click("#rv-rc-music");
   await page.reload();
   await expect(page.locator("#rv_modal")).toBeHidden({ timeout: 30000 });
   const drop = await createReplayDrop(page);
@@ -1277,6 +1344,7 @@ test("viewer toggle settings persist across reload", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => _observer_get_value())).toBe(0);
   await expect.poll(() => page.evaluate(() => _fog_of_war_get_value())).toBe(0);
   await expect.poll(() => page.evaluate(() => _force_red_blue_colors_get_value())).toBe(1);
+  await expect(page.locator("#rv-rc-music")).toHaveClass(/is-enabled/);
 
   assertCleanLogs(logs);
 });

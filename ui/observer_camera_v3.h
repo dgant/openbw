@@ -247,7 +247,7 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 			xy camera_center = xy((int)std::lround(observer_v3_camera_x), (int)std::lround(observer_v3_camera_y));
 			double half_view_width = (double)ui.view_width;
 			double half_view_height = (double)ui.view_height;
-			double max_velocity = 64.0 * 4.0;
+			double max_velocity = 9.6 * (1000.0 / 42.0) * std::max(1.0 / 128.0, ui.game_speed.raw_value / 256.0);
 			double remaining_jump_cooldown = std::max(
 				0.0,
 				std::chrono::duration_cast<std::chrono::duration<double>>(observer_v3_jump_cooldown_until - now).count());
@@ -306,7 +306,7 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 	}
 
 	double velocity_length = std::sqrt(observer_v3_velocity_x * observer_v3_velocity_x + observer_v3_velocity_y * observer_v3_velocity_y);
-	double max_velocity = 64.0 * 4.0;
+	double max_velocity = 9.6 * (1000.0 / 42.0) * std::max(1.0 / 128.0, ui.game_speed.raw_value / 256.0);
 	if (velocity_length > max_velocity && velocity_length > 0.0) {
 		double scale = max_velocity / velocity_length;
 		observer_v3_velocity_x *= scale;
