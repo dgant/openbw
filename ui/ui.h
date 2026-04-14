@@ -761,12 +761,12 @@ struct ui_functions: ui_util_functions {
 	}
 
 	virtual void play_acknowledgement_sound(int id, const unit_t* source_unit = nullptr) override {
-		if (st.current_frame != replay_frame) return;
+		if (st.current_frame < replay_frame) return;
 		play_sound_internal(id, xy(), source_unit, sound_mix_group_acknowledgement, false);
 	}
 
 	virtual void notify_player_under_attack(int owner, bool is_base) override {
-		if (st.current_frame != replay_frame) return;
+		if (st.current_frame < replay_frame) return;
 		if (owner != primary_perspective_player_index) return;
 		auto& last_frame = is_base ? last_base_under_attack_frame[owner] : last_forces_under_attack_frame[owner];
 		if (st.current_frame - last_frame < 24 * 4) return;
