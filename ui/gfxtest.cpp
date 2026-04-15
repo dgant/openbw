@@ -74,6 +74,7 @@ struct main_t {
 	std::chrono::steady_clock::time_point observer_manual_override_until = std::chrono::steady_clock::time_point::min();
 	std::chrono::steady_clock::time_point observer_v3_jump_cooldown_until = std::chrono::steady_clock::time_point::min();
 	std::chrono::steady_clock::time_point observer_v3_nuke_hold_until = std::chrono::steady_clock::time_point::min();
+	std::chrono::steady_clock::time_point observer_v3_viewport_fight_hold_until = std::chrono::steady_clock::time_point::min();
 	std::chrono::steady_clock::time_point observer_v3_last_update_time = std::chrono::steady_clock::time_point::min();
 	xy observer_v3_nuke_hold_position;
 	double observer_v3_camera_x = 0.0;
@@ -115,6 +116,7 @@ struct main_t {
 		observer_manual_override_until = std::chrono::steady_clock::time_point::min();
 		observer_v3_jump_cooldown_until = std::chrono::steady_clock::time_point::min();
 		observer_v3_nuke_hold_until = std::chrono::steady_clock::time_point::min();
+		observer_v3_viewport_fight_hold_until = std::chrono::steady_clock::time_point::min();
 		observer_v3_last_update_time = std::chrono::steady_clock::time_point::min();
 		observer_v3_nuke_hold_position = {};
 		observer_v3_camera_x = 0.0;
@@ -216,7 +218,7 @@ struct main_t {
 	template <typename T>
 	void observer_v3_collect_eligible_units(T&& list, a_vector<unit_t*>& out);
 	void observer_v3_update_interest_queue(const a_vector<unit_t*>& eligible_units);
-	int observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& best_viewport_score);
+	int observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& best_viewport_score, bool retain_viewport_fight);
 	void observer_v3_update_motion(std::chrono::steady_clock::time_point now);
 	void update_observer_camera_v3(std::chrono::steady_clock::time_point now);
 
@@ -991,6 +993,7 @@ std::string get_observer_debug_summary() {
 			best_unit = unit;
 		}
 	}
+	bool retain_viewport_fight = viewport_attention_count != 0 || std::chrono::steady_clock::now() < m->observer_v3_viewport_fight_hold_until;
 
 	auto best = best_unit ? make_candidate(best_unit, best_score) : candidate_t{};
 	auto best_viewport = best_viewport_unit ? make_candidate(best_viewport_unit, best_viewport_score) : candidate_t{};
@@ -1003,7 +1006,7 @@ std::string get_observer_debug_summary() {
 		<< "\"attentionCount\":" << attention_count << ","
 		<< "\"viewportCount\":" << viewport_count << ","
 		<< "\"viewportAttentionCount\":" << viewport_attention_count << ","
-		<< "\"retainViewportFight\":" << (best_viewport_score > 100.0 ? "true" : "false") << ","
+		<< "\"retainViewportFight\":" << (retain_viewport_fight ? "true" : "false") << ","
 		<< "\"jumpCooldownActive\":" << (std::chrono::steady_clock::now() < m->observer_v3_jump_cooldown_until ? "true" : "false") << ","
 		<< "\"best\":{"
 			<< "\"unitId\":" << best.unit_id << ","

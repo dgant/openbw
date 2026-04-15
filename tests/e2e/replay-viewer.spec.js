@@ -1660,6 +1660,38 @@ test("late-game camera scoring does not let stale offscreen idle scores beat an 
   assertCleanLogs(logs);
 });
 
+test("late-game camera retains the current fight through brief attention dropouts", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, nukeReplayPath, "Hannes");
+  const startFrame = Math.round((31 * 60 + 5) * 1000 / 42);
+  const endFrame = Math.round((31 * 60 + 13) * 1000 / 42);
+  await page.evaluate((frame) => {
+    _replay_set_value(3, frame);
+    _replay_set_value(0, 16);
+    _replay_set_value(1, 0);
+  }, startFrame);
+  await page.waitForFunction((frame) => _replay_get_value(2) >= frame, startFrame, { timeout: 120000 });
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const summary = JSON.parse(Module.get_observer_debug_summary());
+          return summary.frame >= Math.round((31 * 60 + 5) * 1000 / 42) ? summary.viewportAttentionCount : 0;
+        }),
+      { timeout: 30000 }
+    )
+    .toBeGreaterThan(0);
+
+  await page.waitForFunction((frame) => _replay_get_value(2) >= frame, endFrame, { timeout: 120000 });
+  const summary = await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()));
+  expect(summary.frame).toBeGreaterThanOrEqual(endFrame);
+  expect(summary.viewportAttentionCount).toBe(0);
+  expect(summary.retainViewportFight).toBe(true);
+
+  assertCleanLogs(logs);
+});
+
 test("WillyT replay keeps advancing at 128x through the reported 7:38 freeze point", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
