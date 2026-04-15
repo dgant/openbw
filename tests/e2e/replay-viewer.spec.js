@@ -1505,8 +1505,8 @@ test("nuclear launch viewport alert banner shows and hides from the engine event
     window.main_has_been_called = true;
     window._replay_get_value = (key) => (key === 4 ? 1 : 0);
     window.Module = window.Module || {};
-    Module.get_nuclear_launch_alert_count = () => 1;
-    viewportAlertState.lastNuclearLaunchCount = 0;
+    Module.get_acknowledgement_sound_play_count = (id) => (id === 128 ? 1 : 0);
+    viewportAlertState.lastNuclearLaunchSoundCount = 0;
     viewportAlertState.hideAt = 0;
     update_viewport_alert();
     return {
