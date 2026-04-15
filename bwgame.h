@@ -349,6 +349,7 @@ struct state_functions {
 		play_acknowledgement_sound(base_id + race_offset, source_unit);
 	}
 	virtual void notify_player_under_attack(unit_t* target) {}
+	virtual void notify_nuclear_launch_detected(int owner, const unit_t* source_unit = nullptr) {}
 	virtual void on_unit_deselect(unit_t* u) {}
 
 	virtual void on_unit_destroy(unit_t* u) {}
@@ -6199,6 +6200,7 @@ struct state_functions {
 			if (u->main_order_timer <= 45 || unit_is_at_move_target(u)) {
 				if (primary_perspective_player() >= 0) {
 					play_acknowledgement_race_sound(127, primary_perspective_player(), u);
+					notify_nuclear_launch_detected(primary_perspective_player(), u);
 				}
 				// todo: callback for message
 				u->order_state = 2;

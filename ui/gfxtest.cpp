@@ -921,6 +921,10 @@ int get_acknowledgement_sound_play_count(int id) {
 	return it->second;
 }
 
+int get_nuclear_launch_alert_count() {
+	return m->ui.nuclear_launch_alert_count;
+}
+
 EMSCRIPTEN_BINDINGS(openbw) {
 	register_vector<js_unit>("vector_js_unit");
 	class_<util_functions>("util_functions")
@@ -947,6 +951,7 @@ EMSCRIPTEN_BINDINGS(openbw) {
 	function("get_acknowledgement_play_count", &get_acknowledgement_play_count);
 	function("get_last_acknowledgement_sound_id", &get_last_acknowledgement_sound_id);
 	function("get_acknowledgement_sound_play_count", &get_acknowledgement_sound_play_count);
+	function("get_nuclear_launch_alert_count", &get_nuclear_launch_alert_count);
 
 	class_<unit_type_t>("unit_type_t")
 		.property("id", &unit_type_t_id)

@@ -1152,6 +1152,29 @@ test("settings modal uses audio and video tabs with immediate persistence", asyn
   await expect(page.locator('[data-settings-panel="video"]')).toBeVisible();
   await expect(page.locator('[data-settings-panel="audio"]')).toBeHidden();
   await expect(page.locator("#export-width")).toHaveJSProperty("value", "1280");
+  await page.click("#settings-tab-audio");
+  await page.fill("#audio-overall-slider", "100");
+  await page.dispatchEvent("#audio-overall-slider", "input");
+  await page.fill("#audio-music-slider", "100");
+  await page.dispatchEvent("#audio-music-slider", "input");
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        volume: JSON.parse(localStorage.volumeSettings || "{}"),
+        audioSettings: JSON.parse(localStorage.audioCategorySettings || "{}"),
+        musicVolume: window.musicState && window.musicState.audio ? window.musicState.audio.volume : null
+      }))
+    )
+    .toEqual({
+      volume: { level: 1, muted: false },
+      audioSettings: {
+        combat: { enabled: true, level: 1 },
+        acknowledgements: { enabled: true, level: 1 },
+        music: { enabled: true, level: 1 }
+      },
+      musicVolume: 1
+    });
+  await page.click("#settings-tab-video");
   await expect
     .poll(() => page.evaluate(() => localStorage.settingsModalTab))
     .toBe("video");
@@ -1470,6 +1493,44 @@ test("viewer toggle settings persist across reload", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => _fog_of_war_get_value())).toBe(0);
   await expect.poll(() => page.evaluate(() => _force_red_blue_colors_get_value())).toBe(1);
   await expect(page.locator("#rv-rc-music")).toHaveClass(/is-enabled/);
+
+  assertCleanLogs(logs);
+});
+
+test("nuclear launch viewport alert banner shows and hides from the engine event counter", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.goto("/");
+  const visibleState = await page.evaluate(() => {
+    window.main_has_been_called = true;
+    window._replay_get_value = (key) => (key === 4 ? 1 : 0);
+    window.Module = window.Module || {};
+    Module.get_nuclear_launch_alert_count = () => 1;
+    viewportAlertState.lastNuclearLaunchCount = 0;
+    viewportAlertState.hideAt = 0;
+    update_viewport_alert();
+    return {
+      text: document.querySelector("#viewport-alert")?.textContent || "",
+      visible: document.querySelector("#viewport-alert")?.classList.contains("is-visible") || false
+    };
+  });
+  expect(visibleState).toEqual({
+    text: "Nuclear launch detected",
+    visible: true
+  });
+
+  const hiddenState = await page.evaluate(() => {
+    viewportAlertState.hideAt = Date.now() - 1;
+    update_viewport_alert();
+    return {
+      text: document.querySelector("#viewport-alert")?.textContent || "",
+      visible: document.querySelector("#viewport-alert")?.classList.contains("is-visible") || false
+    };
+  });
+  expect(hiddenState).toEqual({
+    text: "",
+    visible: false
+  });
 
   assertCleanLogs(logs);
 });

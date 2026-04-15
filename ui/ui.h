@@ -597,6 +597,9 @@ struct ui_functions: ui_util_functions {
 	int primary_perspective_player_index = -1;
 	int acknowledgement_play_count = 0;
 	int last_acknowledgement_sound_id = -1;
+	int nuclear_launch_alert_count = 0;
+	int last_base_under_attack_frame = -(24 * 30);
+	int last_forces_under_attack_frame = -(24 * 30);
 	std::unordered_map<int, int> acknowledgement_sound_play_counts;
 
 	enum sound_mix_group {
@@ -723,7 +726,14 @@ struct ui_functions: ui_util_functions {
 
 			const unit_type_t* unit_type = source_unit ? source_unit->unit_type : nullptr;
 
-			if (sound_type->flags & 0x10) {
+			if (mix_group == sound_mix_group_acknowledgement) {
+				for (auto& c : sound_channels) {
+					if (c.playing && c.sound_type == sound_type) {
+						if (native_sound::is_playing(&c - sound_channels.data())) return;
+						c.playing = false;
+					}
+				}
+			} else if (sound_type->flags & 0x10) {
 				for (auto& c : sound_channels) {
 					if (c.playing && c.sound_type == sound_type) {
 						if (native_sound::is_playing(&c - sound_channels.data())) return;
@@ -777,10 +787,18 @@ struct ui_functions: ui_util_functions {
 		if (st.current_frame < replay_frame) return;
 		int owner = target->owner;
 		if (owner != primary_perspective_player_index) return;
-		if (target->attack_notify_timer > st.current_frame) return;
-		target->attack_notify_timer = st.current_frame + 24 * 4;
 		bool is_base = ut_building(target);
+		auto& last_frame = is_base ? last_base_under_attack_frame : last_forces_under_attack_frame;
+		if (st.current_frame - last_frame < 24 * 30) return;
+		last_frame = st.current_frame;
+		target->attack_notify_timer = st.current_frame + 24 * 30;
 		play_acknowledgement_race_sound(is_base ? 117 : 120, owner);
+	}
+
+	virtual void notify_nuclear_launch_detected(int owner, const unit_t* source_unit = nullptr) override {
+		if (st.current_frame < replay_frame) return;
+		if (owner != primary_perspective_player_index) return;
+		++nuclear_launch_alert_count;
 	}
 
 	a_vector<uint8_t> creep_random_tile_indices = a_vector<uint8_t>(256 * 256);
