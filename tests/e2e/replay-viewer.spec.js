@@ -1497,27 +1497,43 @@ test("viewer toggle settings persist across reload", async ({ page }) => {
   assertCleanLogs(logs);
 });
 
-test("nuclear launch viewport alert banner shows and hides from the engine event counter", async ({ page }) => {
+test("nuclear launch viewport alert banner tracks the canvas and uses plain white text styling", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
   await page.goto("/");
   const visibleState = await page.evaluate(() => {
-    window.main_has_been_called = true;
-    window._replay_get_value = (key) => (key === 4 ? 1 : 0);
-    window.Module = window.Module || {};
-    Module.get_acknowledgement_sound_play_count = (id) => (id === 128 ? 1 : 0);
-    viewportAlertState.lastNuclearLaunchSoundCount = 0;
-    viewportAlertState.hideAt = 0;
-    update_viewport_alert();
-    return {
-      text: document.querySelector("#viewport-alert")?.textContent || "",
-      visible: document.querySelector("#viewport-alert")?.classList.contains("is-visible") || false
-    };
-  });
-  expect(visibleState).toEqual({
-    text: "Nuclear launch detected",
-    visible: true
-  });
+      window.main_has_been_called = true;
+      window._replay_get_value = (key) => (key === 4 ? 1 : 0);
+      window.Module = window.Module || {};
+      Module.get_acknowledgement_sound_play_count = (id) => (id === 128 ? 1 : 0);
+      viewportAlertState.lastNuclearLaunchSoundCount = 0;
+      viewportAlertState.hideAt = 0;
+      update_viewport_alert();
+      const alert = document.querySelector("#viewport-alert");
+      const canvas = document.querySelector("#canvas");
+      const alertRect = alert.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      const computed = window.getComputedStyle(alert);
+      return {
+        text: alert?.textContent || "",
+        visible: alert?.classList.contains("is-visible") || false,
+        color: computed.color,
+        backgroundColor: computed.backgroundColor,
+        borderTopWidth: computed.borderTopWidth,
+        centerDelta: Math.round(Math.abs((alertRect.left + alertRect.width / 2) - (canvasRect.left + canvasRect.width / 2))),
+        bottomInsideCanvas: Math.round(canvasRect.bottom - alertRect.bottom),
+        topInsideCanvas: Math.round(alertRect.top - canvasRect.top)
+      };
+    });
+  expect(visibleState.text).toBe("Nuclear launch detected");
+  expect(visibleState.visible).toBe(true);
+  expect(visibleState.color).toBe("rgb(255, 255, 255)");
+  expect(visibleState.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+  expect(visibleState.borderTopWidth).toBe("0px");
+  expect(visibleState.centerDelta).toBeLessThanOrEqual(1);
+  expect(visibleState.bottomInsideCanvas).toBeGreaterThanOrEqual(0);
+  expect(visibleState.bottomInsideCanvas).toBeLessThanOrEqual(48);
+  expect(visibleState.topInsideCanvas).toBeGreaterThanOrEqual(0);
 
   const hiddenState = await page.evaluate(() => {
     viewportAlertState.hideAt = Date.now() - 1;
