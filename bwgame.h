@@ -348,7 +348,7 @@ struct state_functions {
 		}
 		play_acknowledgement_sound(base_id + race_offset, source_unit);
 	}
-	virtual void notify_player_under_attack(int owner, bool is_base) {}
+	virtual void notify_player_under_attack(unit_t* target) {}
 	virtual void on_unit_deselect(unit_t* u) {}
 
 	virtual void on_unit_destroy(unit_t* u) {}
@@ -13648,7 +13648,7 @@ struct state_functions {
 				update_unit_damage_overlay(u);
 			}
 			if (source_unit && source_unit->owner != u->owner && reveal_source) {
-				notify_player_under_attack(u->owner, ut_building(u));
+				notify_player_under_attack(u);
 			}
 		} else {
 			if (unit_provides_space(u) && !ut_building(u)) {
@@ -13740,7 +13740,7 @@ struct state_functions {
 		if (source_unit) {
 			on_unit_damage(target, source_unit, weapon->id != WeaponTypes::Irradiate);
 			if (weapon->id != WeaponTypes::Irradiate && target->owner != source_unit->owner) {
-				notify_player_under_attack(target->owner, ut_building(target));
+				notify_player_under_attack(target);
 			}
 			if (weapon->damage_type != weapon_type_t::damage_type_none) {
 				if (target->unit_type->has_shield && target->shield_points >= fp8::integer(1)) {
@@ -17228,8 +17228,12 @@ struct state_functions {
 		}
 		u->air_strength = get_unit_strength(u, false);
 		u->ground_strength = get_unit_strength(u, true);
-		if (!ut_building(u) && u->owner == primary_perspective_player() && u->unit_type->ready_sound >= 0) {
-			play_acknowledgement_sound(u->unit_type->ready_sound, u);
+		if (u->owner == primary_perspective_player()) {
+			if (ut_building(u)) {
+				if (st.players[u->owner].race == race_t::terran) play_acknowledgement_sound(136, u);
+			} else if (u->unit_type->ready_sound > 0) {
+				play_acknowledgement_sound(u->unit_type->ready_sound, u);
+			}
 		}
 	}
 

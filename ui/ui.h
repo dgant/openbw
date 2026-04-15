@@ -596,8 +596,8 @@ struct ui_functions: ui_util_functions {
 	int acknowledgement_volume = 100;
 	int primary_perspective_player_index = -1;
 	int acknowledgement_play_count = 0;
-	std::array<int, 12> last_base_under_attack_frame{};
-	std::array<int, 12> last_forces_under_attack_frame{};
+	int last_acknowledgement_sound_id = -1;
+	std::unordered_map<int, int> acknowledgement_sound_play_counts;
 
 	enum sound_mix_group {
 		sound_mix_group_combat,
@@ -675,7 +675,7 @@ struct ui_functions: ui_util_functions {
 
 	void play_sound_internal(int id, xy position, const unit_t* source_unit, sound_mix_group mix_group, bool positional) {
 		if (global_volume == 0 || group_volume(mix_group) == 0) return;
-		if ((size_t)id >= has_loaded_sound.size()) return;
+		if (id <= 0 || (size_t)id >= has_loaded_sound.size()) return;
 		if (!has_loaded_sound[id]) {
 			has_loaded_sound[id] = true;
 			a_vector<uint8_t> data;
@@ -744,6 +744,8 @@ struct ui_functions: ui_util_functions {
 				native_sound::play(c - sound_channels.data(), &*s, (128 - 4) * (volume * group_volume(mix_group) / 100) * global_volume / 10000, pan);
 				if (mix_group == sound_mix_group_acknowledgement) {
 					++acknowledgement_play_count;
+					last_acknowledgement_sound_id = id;
+					++acknowledgement_sound_play_counts[id];
 				}
 				c->playing = true;
 				c->sound_type = sound_type;
@@ -770,12 +772,14 @@ struct ui_functions: ui_util_functions {
 		play_sound_internal(id, xy(), source_unit, sound_mix_group_acknowledgement, false);
 	}
 
-	virtual void notify_player_under_attack(int owner, bool is_base) override {
+	virtual void notify_player_under_attack(unit_t* target) override {
+		if (!target) return;
 		if (st.current_frame < replay_frame) return;
+		int owner = target->owner;
 		if (owner != primary_perspective_player_index) return;
-		auto& last_frame = is_base ? last_base_under_attack_frame[owner] : last_forces_under_attack_frame[owner];
-		if (st.current_frame - last_frame < 24 * 4) return;
-		last_frame = st.current_frame;
+		if (target->attack_notify_timer > st.current_frame) return;
+		target->attack_notify_timer = st.current_frame + 24 * 4;
+		bool is_base = ut_building(target);
 		play_acknowledgement_race_sound(is_base ? 117 : 120, owner);
 	}
 
@@ -811,9 +815,6 @@ struct ui_functions: ui_util_functions {
 		native_sound::init();
 
 		sound_channels.resize(8);
-		last_base_under_attack_frame.fill(-(24 * 4));
-		last_forces_under_attack_frame.fill(-(24 * 4));
-
 		load_data_file(images_tbl.data, "arr/images.tbl");
 
 		load_all_image_data(load_data_file);

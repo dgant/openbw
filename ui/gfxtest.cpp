@@ -416,7 +416,6 @@ size_t bytes_allocated = 0;
 void free_memory() {
 	if (!g_m) out_of_memory();
 	size_t n_states = g_m->saved_states.size();
-	printf("n_states is %zu\n", n_states);
 	if (n_states <= 2) out_of_memory();
 	size_t n;
 	if (n_states >= 300) n = 1 + freemem_rand() % (n_states - 2);
@@ -912,6 +911,16 @@ int get_acknowledgement_play_count() {
 	return m->ui.acknowledgement_play_count;
 }
 
+int get_last_acknowledgement_sound_id() {
+	return m->ui.last_acknowledgement_sound_id;
+}
+
+int get_acknowledgement_sound_play_count(int id) {
+	auto it = m->ui.acknowledgement_sound_play_counts.find(id);
+	if (it == m->ui.acknowledgement_sound_play_counts.end()) return 0;
+	return it->second;
+}
+
 EMSCRIPTEN_BINDINGS(openbw) {
 	register_vector<js_unit>("vector_js_unit");
 	class_<util_functions>("util_functions")
@@ -936,6 +945,8 @@ EMSCRIPTEN_BINDINGS(openbw) {
 	function("set_primary_perspective_player", &set_primary_perspective_player);
 	function("get_primary_perspective_player", &get_primary_perspective_player);
 	function("get_acknowledgement_play_count", &get_acknowledgement_play_count);
+	function("get_last_acknowledgement_sound_id", &get_last_acknowledgement_sound_id);
+	function("get_acknowledgement_sound_play_count", &get_acknowledgement_sound_play_count);
 
 	class_<unit_type_t>("unit_type_t")
 		.property("id", &unit_type_t_id)

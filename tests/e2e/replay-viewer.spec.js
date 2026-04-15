@@ -3,6 +3,7 @@ const fs = require("fs/promises");
 
 const defaultReplayName = "PurpleWave vs Monster Tau Cross CTR_41B69CB9.rep";
 const defaultReplayPath = `/workspace/replays/${defaultReplayName}`;
+const willyTReplayPath = "/workspace/replays/PurpleWave vs WillyT Icarus CTR_20B3F39.rep";
 const basilReplayUrl = "https://data.basil-ladder.net/bots/Brainiac/Brainiac%20vs%20adias%20Roadrunner%20CTR_95D142E3.rep";
 
 async function createReplayDrop(page, replayPath = defaultReplayPath) {
@@ -1091,7 +1092,11 @@ test("settings modal uses audio and video tabs with immediate persistence", asyn
       page.evaluate(() => ({
         volume: JSON.parse(localStorage.volumeSettings || "{}"),
         audioSettings: JSON.parse(localStorage.audioCategorySettings || "{}"),
-        musicVolume: window.musicState && window.musicState.audio ? window.musicState.audio.volume : null
+        musicVolume: window.musicState && window.musicState.audio ? window.musicState.audio.volume : null,
+        footerSlider: {
+          value: document.querySelector("#volumeOutput")?.value || "",
+          aria: document.querySelector("#volume-slider-handle")?.getAttribute("aria-valuenow") || ""
+        }
       }))
     )
     .toEqual({
@@ -1101,7 +1106,11 @@ test("settings modal uses audio and video tabs with immediate persistence", asyn
         acknowledgements: { enabled: true, level: 1 },
         music: { enabled: true, level: 0.4 }
       },
-      musicVolume: 0.1
+      musicVolume: 0.1,
+      footerSlider: {
+        value: "25",
+        aria: "25"
+      }
     });
   await page.click("#audio-settings-reset");
   await expect
@@ -1110,6 +1119,10 @@ test("settings modal uses audio and video tabs with immediate persistence", asyn
         volume: JSON.parse(localStorage.volumeSettings || "{}"),
         audioSettings: JSON.parse(localStorage.audioCategorySettings || "{}"),
         soundClass: document.querySelector("#audio-overall-toggle")?.className || "",
+        footerSlider: {
+          value: document.querySelector("#volumeOutput")?.value || "",
+          aria: document.querySelector("#volume-slider-handle")?.getAttribute("aria-valuenow") || ""
+        },
         runtime: {
           overall: typeof Module.get_volume === "function" ? Module.get_volume() : null,
           combat: typeof Module.get_combat_volume === "function" ? Module.get_combat_volume() : null,
@@ -1125,6 +1138,10 @@ test("settings modal uses audio and video tabs with immediate persistence", asyn
         music: { enabled: true, level: 0.25 }
       },
       soundClass: expect.stringContaining("rv-rc-sound"),
+      footerSlider: {
+        value: "50",
+        aria: "50"
+      },
       runtime: {
         overall: 0.5,
         combat: 1,
@@ -1453,6 +1470,44 @@ test("viewer toggle settings persist across reload", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => _fog_of_war_get_value())).toBe(0);
   await expect.poll(() => page.evaluate(() => _force_red_blue_colors_get_value())).toBe(1);
   await expect(page.locator("#rv-rc-music")).toHaveClass(/is-enabled/);
+
+  assertCleanLogs(logs);
+});
+
+test("WillyT replay keeps advancing at 128x through the reported 7:38 freeze point", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, willyTReplayPath, "WillyT");
+  for (let i = 0; i < 7; ++i) {
+    await page.click("#rv-rc-faster");
+  }
+
+  await expect.poll(() => page.evaluate(() => _replay_get_value(2)), { timeout: 70000 }).toBeGreaterThan(11200);
+  const startFrame = await page.evaluate(() => _replay_get_value(2));
+  await page.waitForTimeout(2000);
+  const endState = await page.evaluate(() => ({
+    cur: _replay_get_value(2),
+    speed: document.querySelector("#rv-rc-speed")?.textContent || ""
+  }));
+  expect(endState.cur).toBeGreaterThan(startFrame);
+  expect(endState.speed).toContain("128.00x");
+
+  assertCleanLogs(logs);
+});
+
+test("Terran building completion plays the SCV update acknowledgement sound for the first player", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, willyTReplayPath, "WillyT");
+  await page.click("#rv-rc-sound");
+  await page.click("#rv-rc-sound");
+  await page.evaluate(() => _replay_set_value(0, 32));
+
+  await expect
+    .poll(() => page.evaluate(() => (typeof Module.get_acknowledgement_sound_play_count === "function" ? Module.get_acknowledgement_sound_play_count(136) : 0)), {
+      timeout: 30000
+    })
+    .toBeGreaterThan(0);
 
   assertCleanLogs(logs);
 });
