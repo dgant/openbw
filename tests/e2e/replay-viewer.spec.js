@@ -4,6 +4,7 @@ const fs = require("fs/promises");
 const defaultReplayName = "PurpleWave vs Monster Tau Cross CTR_41B69CB9.rep";
 const defaultReplayPath = `/workspace/replays/${defaultReplayName}`;
 const willyTReplayPath = "/workspace/replays/PurpleWave vs WillyT Icarus CTR_20B3F39.rep";
+const nukeReplayPath = "/workspace/replays/Hannes Bredberg vs VOID La Mancha1.1 (Nukes).rep";
 const basilReplayUrl = "https://data.basil-ladder.net/bots/Brainiac/Brainiac%20vs%20adias%20Roadrunner%20CTR_95D142E3.rep";
 
 async function createReplayDrop(page, replayPath = defaultReplayPath) {
@@ -1242,6 +1243,54 @@ test("music playlist uses the first player's race only", async ({ page }) => {
   assertCleanLogs(logs);
 });
 
+test("music pauses when playback loses window focus and resumes when focus returns", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.goto("/");
+  const state = await page.evaluate(async () => {
+    viewerToggleSettings.musicEnabled = true;
+    window.main_has_been_called = true;
+    window._replay_get_value = (key) => {
+      if (key === 1) return 0;
+      if (key === 2) return 100;
+      if (key === 4) return 200;
+      return 0;
+    };
+    musicState.unlocked = true;
+    musicState.playlist = ["track.mp3"];
+    musicState.audio = {
+      paused: false,
+      pauseCalls: 0,
+      playCalls: 0,
+      pause() {
+        this.paused = true;
+        this.pauseCalls += 1;
+      },
+      play() {
+        this.paused = false;
+        this.playCalls += 1;
+        return Promise.resolve();
+      }
+    };
+    viewerWindowFocused = false;
+    sync_music_playback_state();
+    viewerWindowFocused = true;
+    sync_music_playback_state();
+    return {
+      pauseCalls: musicState.audio.pauseCalls,
+      playCalls: musicState.audio.playCalls,
+      paused: musicState.audio.paused
+    };
+  });
+  expect(state).toEqual({
+    pauseCalls: 1,
+    playCalls: 1,
+    paused: false
+  });
+
+  assertCleanLogs(logs);
+});
+
 test("first-player acknowledgement sounds actually trigger during playback", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
@@ -1547,6 +1596,66 @@ test("nuclear launch viewport alert banner tracks the canvas and uses plain whit
     text: "",
     visible: false
   });
+
+  assertCleanLogs(logs);
+});
+
+test("fast-forward overlay shows the target time while catch-up is in progress", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.goto("/");
+  const overlayState = await page.evaluate(() => {
+    window.main_has_been_called = true;
+    window._replay_get_value = (key) => {
+      if (key === 2) return 1000;
+      if (key === 3) return 2500;
+      if (key === 4) return 5000;
+      return 0;
+    };
+    viewportAlertState.lastNuclearLaunchSoundCount = 0;
+    viewportAlertState.hideAt = 0;
+    update_viewport_alert();
+    const alert = document.querySelector("#viewport-alert");
+    return {
+      text: alert?.textContent || "",
+      visible: alert?.classList.contains("is-visible") || false
+    };
+  });
+  expect(overlayState).toEqual({
+    text: "Fast-forwarding to 01:45",
+    visible: true
+  });
+
+  assertCleanLogs(logs);
+});
+
+test("late-game camera scoring does not let stale offscreen idle scores beat an active viewport fight", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, nukeReplayPath, "Hannes");
+  await page.evaluate(() => {
+    _replay_set_value(3, 27 * 60 * 24);
+    _replay_set_value(0, 16);
+    _replay_set_value(1, 0);
+  });
+  await page.waitForFunction(() => Math.abs(_replay_get_value(2) - _replay_get_value(3)) < 8, null, { timeout: 120000 });
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          if (typeof Module.get_observer_debug_summary !== "function") return null;
+          const summary = JSON.parse(Module.get_observer_debug_summary());
+          if (summary.frame < 42300 || summary.viewportAttentionCount < 4) return null;
+          return summary;
+        }),
+      { timeout: 30000 }
+    )
+    .not.toBeNull();
+
+  const summary = await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()));
+  expect(summary.viewportAttentionCount).toBeGreaterThanOrEqual(4);
+  expect(summary.bestViewport.score).toBeGreaterThan(100);
+  expect(summary.bestOffscreen.attention || summary.bestOffscreen.score <= 100).toBe(true);
 
   assertCleanLogs(logs);
 });

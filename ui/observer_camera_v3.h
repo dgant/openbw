@@ -82,7 +82,7 @@ inline bool main_t::observer_v3_focus_nukes(std::chrono::steady_clock::time_poin
 			if (!ui.unit_is(unit, UnitTypes::Terran_Nuclear_Missile)) continue;
 			if (unit->velocity.y == 0_fp8) continue;
 			observer_v3_nuke_hold_position = unit->sprite->position;
-			observer_v3_nuke_hold_until = now + std::chrono::seconds(3);
+			observer_v3_nuke_hold_until = now + std::chrono::seconds(6);
 			observer_v3_apply_center(observer_v3_nuke_hold_position, true);
 			return true;
 		}
@@ -160,6 +160,16 @@ inline double main_t::observer_v3_compute_interest(unit_t* unit) {
 	return score;
 }
 
+inline double main_t::observer_v3_effective_interest_score(unit_t* unit) {
+	int unit_key = (int)ui.get_unit_id_32(unit).raw_value;
+	auto it = observer_v3_interest_scores.find(unit_key);
+	if (it == observer_v3_interest_scores.end()) return observer_v3_compute_interest(unit);
+	if (it->second > 100.0 || observer_position_in_viewport(unit->sprite->position)) {
+		return observer_v3_compute_interest(unit);
+	}
+	return it->second;
+}
+
 template <typename T>
 inline void main_t::observer_v3_collect_eligible_units(T&& list, a_vector<unit_t*>& out) {
 	for (unit_t* unit : list) {
@@ -182,14 +192,14 @@ inline void main_t::observer_v3_update_interest_queue(const a_vector<unit_t*>& e
 	observer_v3_interest_cursor = (observer_v3_interest_cursor + updates) % eligible_units.size();
 }
 
-inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target) {
+inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& best_viewport_score) {
 	if (now < observer_v3_jump_cooldown_until) return 0;
 	unit_t* best_unit = nullptr;
 	double best_score = -1.0;
-	double best_viewport_score = 0.0;
+	best_viewport_score = 0.0;
 	for (unit_t* unit : eligible_units) {
 		int unit_key = (int)ui.get_unit_id_32(unit).raw_value;
-		double score = observer_v3_interest_scores.count(unit_key) ? observer_v3_interest_scores[unit_key] : observer_v3_compute_interest(unit);
+		double score = observer_v3_effective_interest_score(unit);
 		if (observer_position_in_viewport(unit->sprite->position) && score > best_viewport_score) best_viewport_score = score;
 		if (score > best_score) {
 			best_score = score;
@@ -201,6 +211,7 @@ inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eli
 		direct_pan_target = best_unit->sprite->position;
 		return 1;
 	}
+	if (best_viewport_score > 100.0) return 0;
 	observer_v3_apply_center(best_unit->sprite->position, true);
 	observer_v3_jump_cooldown_until = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
 		std::chrono::duration<double>(5.0 + std::min(5.0, best_viewport_score)));
@@ -229,7 +240,9 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 		}
 	} else {
 		xy direct_pan_target{};
-		int jump_action = observer_v3_try_jump_to_interest(eligible_units, now, direct_pan_target);
+		double best_viewport_score = 0.0;
+		int jump_action = observer_v3_try_jump_to_interest(eligible_units, now, direct_pan_target, best_viewport_score);
+		bool retain_viewport_fight = best_viewport_score > 100.0;
 		if (jump_action == 1) {
 			observer_focus_position = direct_pan_target;
 			double dx = (double)direct_pan_target.x - observer_v3_camera_x;
@@ -253,8 +266,8 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 				std::chrono::duration_cast<std::chrono::duration<double>>(observer_v3_jump_cooldown_until - now).count());
 			for (unit_t* unit : eligible_units) {
 				if (!unit || !unit->sprite) continue;
-				int unit_key = (int)ui.get_unit_id_32(unit).raw_value;
-				double score = observer_v3_interest_scores.count(unit_key) ? observer_v3_interest_scores[unit_key] : observer_v3_compute_interest(unit);
+				double score = observer_v3_effective_interest_score(unit);
+				if (retain_viewport_fight && !observer_position_in_viewport(unit->sprite->position)) continue;
 				double dx = (double)unit->sprite->position.x - camera_center.x;
 				double dy = (double)unit->sprite->position.y - camera_center.y;
 				if (std::abs(dx) > half_view_width || std::abs(dy) > half_view_height) continue;

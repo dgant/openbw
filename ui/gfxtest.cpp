@@ -14,6 +14,7 @@
 #include <thread>
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 
 using namespace bwgame;
 
@@ -211,10 +212,11 @@ struct main_t {
 	void observer_v3_apply_center(xy pos, bool reset_velocity);
 	bool observer_v3_focus_nukes(std::chrono::steady_clock::time_point now);
 	double observer_v3_compute_interest(unit_t* unit);
+	double observer_v3_effective_interest_score(unit_t* unit);
 	template <typename T>
 	void observer_v3_collect_eligible_units(T&& list, a_vector<unit_t*>& out);
 	void observer_v3_update_interest_queue(const a_vector<unit_t*>& eligible_units);
-	int observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target);
+	int observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& best_viewport_score);
 	void observer_v3_update_motion(std::chrono::steady_clock::time_point now);
 	void update_observer_camera_v3(std::chrono::steady_clock::time_point now);
 
@@ -274,7 +276,7 @@ struct main_t {
 	}
 
 	void pause_observer_for_manual_camera() {
-		observer_manual_override_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		observer_manual_override_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
 	}
 
 	void update_observer_camera() {
@@ -925,6 +927,122 @@ int get_nuclear_launch_alert_count() {
 	return m->ui.nuclear_launch_alert_count;
 }
 
+std::string get_observer_debug_summary() {
+	if (!m) return "{}";
+	struct candidate_t {
+		int unit_id = -1;
+		int type_id = -1;
+		int owner = -1;
+		int x = 0;
+		int y = 0;
+		int ground_cd = 0;
+		int air_cd = 0;
+		bool in_viewport = false;
+		bool attention = false;
+		double score = -1.0;
+	};
+	auto make_candidate = [&](unit_t* unit, double score) {
+		candidate_t r;
+		r.unit_id = (int)m->ui.get_unit_id_32(unit).raw_value;
+		r.type_id = unit->unit_type ? (int)unit->unit_type->id : -1;
+		r.owner = unit->owner;
+		if (unit->sprite) {
+			r.x = unit->sprite->position.x;
+			r.y = unit->sprite->position.y;
+			r.in_viewport = m->observer_position_in_viewport(unit->sprite->position);
+		}
+		r.ground_cd = unit->ground_weapon_cooldown;
+		r.air_cd = unit->air_weapon_cooldown;
+		r.attention = m->unit_has_v3_attention_status(unit);
+		r.score = score;
+		return r;
+	};
+
+	a_vector<unit_t*> eligible_units;
+	m->observer_v3_collect_eligible_units(ptr(m->ui.st.visible_units), eligible_units);
+	unit_t* best_unit = nullptr;
+	unit_t* best_viewport_unit = nullptr;
+	unit_t* best_offscreen_unit = nullptr;
+	double best_score = -1.0;
+	double best_viewport_score = -1.0;
+	double best_offscreen_score = -1.0;
+	int attention_count = 0;
+	int viewport_count = 0;
+	int viewport_attention_count = 0;
+	for (unit_t* unit : eligible_units) {
+		if (!unit || !unit->sprite) continue;
+		double score = m->observer_v3_effective_interest_score(unit);
+		bool in_viewport = m->observer_position_in_viewport(unit->sprite->position);
+		bool attention = m->unit_has_v3_attention_status(unit);
+		if (attention) ++attention_count;
+		if (in_viewport) {
+			++viewport_count;
+			if (attention) ++viewport_attention_count;
+			if (score > best_viewport_score) {
+				best_viewport_score = score;
+				best_viewport_unit = unit;
+			}
+		} else if (score > best_offscreen_score) {
+			best_offscreen_score = score;
+			best_offscreen_unit = unit;
+		}
+		if (score > best_score) {
+			best_score = score;
+			best_unit = unit;
+		}
+	}
+
+	auto best = best_unit ? make_candidate(best_unit, best_score) : candidate_t{};
+	auto best_viewport = best_viewport_unit ? make_candidate(best_viewport_unit, best_viewport_score) : candidate_t{};
+	auto best_offscreen = best_offscreen_unit ? make_candidate(best_offscreen_unit, best_offscreen_score) : candidate_t{};
+	std::ostringstream out;
+	out << "{"
+		<< "\"frame\":" << m->ui.st.current_frame << ","
+		<< "\"targetFrame\":" << m->ui.replay_frame << ","
+		<< "\"eligibleCount\":" << eligible_units.size() << ","
+		<< "\"attentionCount\":" << attention_count << ","
+		<< "\"viewportCount\":" << viewport_count << ","
+		<< "\"viewportAttentionCount\":" << viewport_attention_count << ","
+		<< "\"retainViewportFight\":" << (best_viewport_score > 100.0 ? "true" : "false") << ","
+		<< "\"jumpCooldownActive\":" << (std::chrono::steady_clock::now() < m->observer_v3_jump_cooldown_until ? "true" : "false") << ","
+		<< "\"best\":{"
+			<< "\"unitId\":" << best.unit_id << ","
+			<< "\"typeId\":" << best.type_id << ","
+			<< "\"owner\":" << best.owner << ","
+			<< "\"score\":" << best.score << ","
+			<< "\"inViewport\":" << (best.in_viewport ? "true" : "false") << ","
+			<< "\"attention\":" << (best.attention ? "true" : "false") << ","
+			<< "\"groundCd\":" << best.ground_cd << ","
+			<< "\"airCd\":" << best.air_cd << ","
+			<< "\"x\":" << best.x << ","
+			<< "\"y\":" << best.y
+		<< "},"
+		<< "\"bestViewport\":{"
+			<< "\"unitId\":" << best_viewport.unit_id << ","
+			<< "\"typeId\":" << best_viewport.type_id << ","
+			<< "\"owner\":" << best_viewport.owner << ","
+			<< "\"score\":" << best_viewport.score << ","
+			<< "\"attention\":" << (best_viewport.attention ? "true" : "false") << ","
+			<< "\"groundCd\":" << best_viewport.ground_cd << ","
+			<< "\"airCd\":" << best_viewport.air_cd << ","
+			<< "\"x\":" << best_viewport.x << ","
+			<< "\"y\":" << best_viewport.y
+		<< "},"
+		<< "\"bestOffscreen\":{"
+			<< "\"unitId\":" << best_offscreen.unit_id << ","
+			<< "\"typeId\":" << best_offscreen.type_id << ","
+			<< "\"owner\":" << best_offscreen.owner << ","
+			<< "\"score\":" << best_offscreen.score << ","
+			<< "\"attention\":" << (best_offscreen.attention ? "true" : "false") << ","
+			<< "\"groundCd\":" << best_offscreen.ground_cd << ","
+			<< "\"airCd\":" << best_offscreen.air_cd << ","
+			<< "\"x\":" << best_offscreen.x << ","
+			<< "\"y\":" << best_offscreen.y
+		<< "}"
+	<< "}";
+	return out.str();
+}
+
 EMSCRIPTEN_BINDINGS(openbw) {
 	register_vector<js_unit>("vector_js_unit");
 	class_<util_functions>("util_functions")
@@ -952,6 +1070,7 @@ EMSCRIPTEN_BINDINGS(openbw) {
 	function("get_last_acknowledgement_sound_id", &get_last_acknowledgement_sound_id);
 	function("get_acknowledgement_sound_play_count", &get_acknowledgement_sound_play_count);
 	function("get_nuclear_launch_alert_count", &get_nuclear_launch_alert_count);
+	function("get_observer_debug_summary", &get_observer_debug_summary);
 
 	class_<unit_type_t>("unit_type_t")
 		.property("id", &unit_type_t_id)
