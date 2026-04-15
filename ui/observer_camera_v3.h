@@ -95,6 +95,21 @@ inline bool main_t::observer_v3_focus_nukes(std::chrono::steady_clock::time_poin
 		return true;
 	}
 
+	unit_t* nearest_ghost = nullptr;
+	double nearest_distance = std::numeric_limits<double>::max();
+	auto maybe_find_nuke_paint_ghost = [&](auto&& list, bool use_anchor, xy anchor) {
+		for (unit_t* unit : list) {
+			if (!unit || !unit->sprite || !is_occupied_player(unit->owner)) continue;
+			if (!ui.unit_is(unit, UnitTypes::Terran_Ghost)) continue;
+			if (!unit->order_type || unit->order_type->id != Orders::NukePaint) continue;
+			double distance = use_anchor ? observer_distance_sq(unit->sprite->position, anchor) : 0.0;
+			if (distance < nearest_distance) {
+				nearest_distance = distance;
+				nearest_ghost = unit;
+			}
+		}
+	};
+
 	xy nuke_dot_position;
 	bool has_nuke_dot = false;
 	auto find_nuke_dot = [&](auto&& list) {
@@ -109,24 +124,13 @@ inline bool main_t::observer_v3_focus_nukes(std::chrono::steady_clock::time_poin
 	};
 	find_nuke_dot(ptr(ui.st.visible_units));
 	if (!has_nuke_dot) find_nuke_dot(ptr(ui.st.hidden_units));
-	if (!has_nuke_dot) return false;
-
-	unit_t* nearest_ghost = nullptr;
-	double nearest_distance = std::numeric_limits<double>::max();
-	auto maybe_find_nuke_paint_ghost = [&](auto&& list) {
-		for (unit_t* unit : list) {
-			if (!unit || !unit->sprite || !is_occupied_player(unit->owner)) continue;
-			if (!ui.unit_is(unit, UnitTypes::Terran_Ghost)) continue;
-			if (!unit->order_type || unit->order_type->id != Orders::NukePaint) continue;
-			double distance = observer_distance_sq(unit->sprite->position, nuke_dot_position);
-			if (distance < nearest_distance) {
-				nearest_distance = distance;
-				nearest_ghost = unit;
-			}
-		}
-	};
-	maybe_find_nuke_paint_ghost(ptr(ui.st.visible_units));
-	maybe_find_nuke_paint_ghost(ptr(ui.st.hidden_units));
+	maybe_find_nuke_paint_ghost(ptr(ui.st.visible_units), has_nuke_dot, nuke_dot_position);
+	maybe_find_nuke_paint_ghost(ptr(ui.st.hidden_units), has_nuke_dot, nuke_dot_position);
+	if (!has_nuke_dot) {
+		if (!nearest_ghost || !nearest_ghost->sprite) return false;
+		observer_v3_apply_center(nearest_ghost->sprite->position, true);
+		return true;
+	}
 	if (nearest_ghost && nearest_ghost->sprite) {
 		nuke_dot_position = xy(
 			(nuke_dot_position.x + nearest_ghost->sprite->position.x) / 2,
@@ -248,7 +252,7 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 			if (unit_has_v3_attention_status(unit)) ++viewport_attention_count;
 		}
 		if (viewport_attention_count != 0) {
-			observer_v3_viewport_fight_hold_until = now + std::chrono::milliseconds(1500);
+			observer_v3_viewport_fight_hold_until = now + std::chrono::milliseconds(6000);
 		}
 		bool retain_viewport_fight = viewport_attention_count != 0 || now < observer_v3_viewport_fight_hold_until;
 		int jump_action = observer_v3_try_jump_to_interest(eligible_units, now, direct_pan_target, best_viewport_score, retain_viewport_fight);

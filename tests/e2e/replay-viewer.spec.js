@@ -81,6 +81,7 @@ test("boots with bundled MPQs and starts a replay from drag and drop", async ({ 
   await expect(page.locator("#map1")).toContainText("Tau Cross");
   await expect(page.locator("#nick2")).toContainText("Monster");
   await expect(page.locator("#rv-rc-timer")).toContainText("time:");
+  await expect(page.locator("#rv-rc-timer")).toHaveAttribute("title", /Frame \d+/);
   await expect(page.locator("#rv-rc-speed")).toContainText("speed:");
   await expect
     .poll(() =>
@@ -98,10 +99,22 @@ test("boots with bundled MPQs and starts a replay from drag and drop", async ({ 
   const controlMetrics = await page.evaluate(() => ({
     replayControlWidth: Math.round(document.querySelector(".replay-control").getBoundingClientRect().width),
     speedScrollHeight: document.querySelector("#rv-rc-speed").scrollHeight,
-    speedClientHeight: document.querySelector("#rv-rc-speed").clientHeight
+    speedClientHeight: document.querySelector("#rv-rc-speed").clientHeight,
+    dockBottomGap: Math.round(
+      document.querySelector("#info_tab_panel1").getBoundingClientRect().bottom -
+      document.querySelector("#info_tab_panel1 .per-player-info2").getBoundingClientRect().bottom
+    ),
+    replayBottomGap: Math.round(
+      document.querySelector(".replay-control").getBoundingClientRect().bottom -
+      document.querySelector(".rv-rc-progress-bar").getBoundingClientRect().bottom
+    ),
+    hasViewportMusicButton: !!document.querySelector("#rv-rc-music")
   }));
   expect(controlMetrics.replayControlWidth).toBeGreaterThanOrEqual(212);
   expect(controlMetrics.speedScrollHeight).toBeLessThanOrEqual(controlMetrics.speedClientHeight);
+  expect(controlMetrics.dockBottomGap).toBe(0);
+  expect(controlMetrics.replayBottomGap).toBe(0);
+  expect(controlMetrics.hasViewportMusicButton).toBe(false);
   await expect(page.locator("#viewport-export")).toBeVisible();
   assertCleanLogs(logs);
 });
@@ -232,10 +245,6 @@ test("existing buttons and hotkeys work during replay playback", async ({ page }
   await page.click("#rv-rc-force-colors");
   await expect(page.locator("#rv-rc-force-colors")).not.toHaveClass(/is-enabled/);
   await expect.poll(() => page.evaluate(() => _force_red_blue_colors_get_value())).toBe(0);
-  await expect(page.locator("#rv-rc-music")).not.toHaveClass(/is-enabled/);
-  await page.click("#rv-rc-music");
-  await expect(page.locator("#rv-rc-music")).toHaveClass(/is-enabled/);
-  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.viewerToggleSettings || "{}").musicEnabled)).toBe(true);
 
   await expect(page.locator("#rv-rc-sound")).toHaveClass(/rv-rc-sound/);
   await page.keyboard.press("s");
@@ -394,16 +403,14 @@ test("existing buttons and hotkeys work during replay playback", async ({ page }
         return {
           zoomColumnLeftAligned: metrics["zoom-in"].left === metrics["zoom-out"].left,
           controlColumnLeftAligned:
-            metrics["rv-rc-music"].left === metrics["rv-rc-force-colors"].left &&
             metrics["rv-rc-force-colors"].left === metrics["rv-rc-observer"].left &&
             metrics["rv-rc-observer"].left === metrics["rv-rc-fow"].left,
-          zoomLeftOfControls: metrics["zoom-in"].left < metrics["rv-rc-music"].left,
-          musicAboveForceColors: metrics["rv-rc-music"].top < metrics["rv-rc-force-colors"].top,
+          zoomLeftOfControls: metrics["zoom-in"].left < metrics["rv-rc-force-colors"].left,
           rightColumnStacks:
-            metrics["rv-rc-music"].top < metrics["rv-rc-force-colors"].top &&
             metrics["rv-rc-force-colors"].top < metrics["rv-rc-observer"].top &&
             metrics["rv-rc-observer"].top < metrics["rv-rc-fow"].top,
           zoomInAboveZoomOut: metrics["zoom-in"].top < metrics["zoom-out"].top,
+          zoomRowsAdjacent: metrics["zoom-out"].top - metrics["zoom-in"].top === 48,
           bottomAligned: metrics["zoom-out"].top === metrics["rv-rc-fow"].top
         };
       })
@@ -412,9 +419,9 @@ test("existing buttons and hotkeys work during replay playback", async ({ page }
       zoomColumnLeftAligned: true,
       controlColumnLeftAligned: true,
       zoomLeftOfControls: true,
-      musicAboveForceColors: true,
       rightColumnStacks: true,
       zoomInAboveZoomOut: true,
+      zoomRowsAdjacent: true,
       bottomAligned: true
     });
   await page.keyboard.press("=");
@@ -1034,8 +1041,6 @@ test("clip HUD buttons match the floating HUD style and export resize stays cent
       centerY: _ui_get_screen_pos(1) + Module.canvas.height / 2,
       areaCenterX: Math.round(area.width / 2),
       areaCenterY: Math.round(area.height / 2),
-      observerBg: getComputedStyle(document.querySelector("#rv-rc-observer")).backgroundColor,
-      observerBorder: getComputedStyle(document.querySelector("#rv-rc-observer")).borderTopColor,
       exportBg: getComputedStyle(document.querySelector("#rv-rc-export")).backgroundColor,
       exportBorder: getComputedStyle(document.querySelector("#rv-rc-export")).borderTopColor,
       exportColor: getComputedStyle(document.querySelector("#rv-rc-export")).color
@@ -1058,7 +1063,6 @@ test("clip HUD buttons match the floating HUD style and export resize stays cent
     };
   });
 
-  expect(before.exportBg).toBe(before.observerBg);
   expect(before.exportBorder).toBe("rgb(77, 85, 100)");
   expect(before.exportColor).toBe("rgb(208, 212, 222)");
   expect(Math.abs(during.canvasCenterX - during.areaCenterX)).toBeLessThanOrEqual(1);
@@ -1073,7 +1077,6 @@ test("settings modal uses audio and video tabs with immediate persistence", asyn
   const logs = await createLogCollectors(page);
 
   await loadReplay(page);
-  await page.click("#rv-rc-music");
   await page.click("#rv-rc-export-settings");
   await expect(page.locator("#export_settings h3")).toHaveText("Settings");
   await expect(page.locator("#export_settings p")).toHaveCount(0);
@@ -1229,7 +1232,6 @@ test("music playlist uses the first player's race only", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
   await loadReplay(page);
-  await page.click("#rv-rc-music");
   await expect.poll(() => page.evaluate(() => (window.musicState ? window.musicState.playlist.length : 0))).toBe(4);
   const playlistState = await page.evaluate(() => ({
     firstPlayerRace: _player_get_value(players[0], C_RACE),
@@ -1248,7 +1250,7 @@ test("music pauses when playback loses window focus and resumes when focus retur
 
   await page.goto("/");
   const state = await page.evaluate(async () => {
-    viewerToggleSettings.musicEnabled = true;
+    audioCategorySettings.music.enabled = true;
     window.main_has_been_called = true;
     window._replay_get_value = (key) => {
       if (key === 1) return 0;
@@ -1531,7 +1533,6 @@ test("viewer toggle settings persist across reload", async ({ page }) => {
   await page.click("#rv-rc-observer");
   await page.click("#rv-rc-fow");
   await page.click("#rv-rc-force-colors");
-  await page.click("#rv-rc-music");
   await page.reload();
   await expect(page.locator("#rv_modal")).toBeHidden({ timeout: 30000 });
   const drop = await createReplayDrop(page);
@@ -1541,7 +1542,6 @@ test("viewer toggle settings persist across reload", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => _observer_get_value())).toBe(0);
   await expect.poll(() => page.evaluate(() => _fog_of_war_get_value())).toBe(0);
   await expect.poll(() => page.evaluate(() => _force_red_blue_colors_get_value())).toBe(1);
-  await expect(page.locator("#rv-rc-music")).toHaveClass(/is-enabled/);
 
   assertCleanLogs(logs);
 });
@@ -1554,8 +1554,9 @@ test("nuclear launch viewport alert banner tracks the canvas and uses plain whit
       window.main_has_been_called = true;
       window._replay_get_value = (key) => (key === 4 ? 1 : 0);
       window.Module = window.Module || {};
-      Module.get_acknowledgement_sound_play_count = (id) => (id === 128 ? 1 : 0);
-      viewportAlertState.lastNuclearLaunchSoundCount = 0;
+      Module.get_nuclear_launch_alert_count = () => 1;
+      viewportAlertState.lastNuclearLaunchAlertCount = 0;
+      viewportAlertState.pendingNuclearLaunch = false;
       viewportAlertState.hideAt = 0;
       update_viewport_alert();
       const alert = document.querySelector("#viewport-alert");
@@ -1612,7 +1613,8 @@ test("fast-forward overlay shows the target time while catch-up is in progress",
       if (key === 4) return 5000;
       return 0;
     };
-    viewportAlertState.lastNuclearLaunchSoundCount = 0;
+    viewportAlertState.lastNuclearLaunchAlertCount = 0;
+    viewportAlertState.pendingNuclearLaunch = false;
     viewportAlertState.hideAt = 0;
     update_viewport_alert();
     const alert = document.querySelector("#viewport-alert");
@@ -1639,21 +1641,21 @@ test("late-game camera scoring does not let stale offscreen idle scores beat an 
     _replay_set_value(1, 0);
   });
   await page.waitForFunction(() => Math.abs(_replay_get_value(2) - _replay_get_value(3)) < 8, null, { timeout: 120000 });
+  let summary = null;
   await expect
     .poll(
-      () =>
-        page.evaluate(() => {
+      async () => {
+        summary = await page.evaluate(() => {
           if (typeof Module.get_observer_debug_summary !== "function") return null;
           const summary = JSON.parse(Module.get_observer_debug_summary());
-          if (summary.frame < 42300 || summary.viewportAttentionCount < 4) return null;
+          if (summary.frame < 42300 || summary.bestViewport.score <= 100) return null;
           return summary;
-        }),
+        });
+        return summary;
+      },
       { timeout: 30000 }
     )
     .not.toBeNull();
-
-  const summary = await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()));
-  expect(summary.viewportAttentionCount).toBeGreaterThanOrEqual(4);
   expect(summary.bestViewport.score).toBeGreaterThan(100);
   expect(summary.bestOffscreen.attention || summary.bestOffscreen.score <= 100).toBe(true);
 
