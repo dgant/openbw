@@ -63,16 +63,16 @@ inline bool main_t::observer_v3_unit_eligible(unit_t* unit) const {
 }
 
 inline void main_t::observer_v3_apply_center(xy pos, bool reset_velocity) {
-	observer_focus_position = pos;
-	observer_current_camera_position = pos;
-	observer_v3_camera_x = (double)pos.x;
-	observer_v3_camera_y = (double)pos.y;
 	if (reset_velocity) {
 		observer_v3_velocity_x = 0.0;
 		observer_v3_velocity_y = 0.0;
 	}
 	ui.screen_pos = pos - observer_view_center_offset();
 	clamp_screen_pos();
+	observer_current_camera_position = observer_view_center_position();
+	observer_focus_position = observer_current_camera_position;
+	observer_v3_camera_x = (double)observer_current_camera_position.x;
+	observer_v3_camera_y = (double)observer_current_camera_position.y;
 }
 
 inline bool main_t::observer_v3_focus_nukes(std::chrono::steady_clock::time_point now) {
@@ -331,8 +331,10 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 	observer_current_camera_position = xy((int)std::lround(observer_v3_camera_x), (int)std::lround(observer_v3_camera_y));
 	ui.screen_pos = observer_current_camera_position - observer_view_center_offset();
 	clamp_screen_pos();
-	observer_v3_camera_x = (double)(ui.screen_pos + observer_view_center_offset()).x;
-	observer_v3_camera_y = (double)(ui.screen_pos + observer_view_center_offset()).y;
+	observer_current_camera_position = observer_view_center_position();
+	observer_focus_position = observer_current_camera_position;
+	observer_v3_camera_x = (double)observer_current_camera_position.x;
+	observer_v3_camera_y = (double)observer_current_camera_position.y;
 }
 
 inline void main_t::update_observer_camera_v3(std::chrono::steady_clock::time_point now) {
