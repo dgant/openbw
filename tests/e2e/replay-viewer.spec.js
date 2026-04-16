@@ -104,6 +104,23 @@ async function forceClick(page, selector) {
   }, selector);
 }
 
+async function dragPlaybackScrubber(page, fraction) {
+  const slider = page.locator("#game-slider");
+  const handle = page.locator("#game-slider-handle");
+  await expect(slider).toBeVisible();
+  const sliderBox = await slider.boundingBox();
+  const handleBox = await handle.boundingBox();
+  if (!sliderBox || !handleBox) {
+    throw new Error("Playback scrubber geometry is unavailable");
+  }
+  const handleX = handleBox.x + handleBox.width / 2;
+  const handleY = handleBox.y + handleBox.height / 2;
+  const targetX = sliderBox.x + sliderBox.width * fraction;
+  await page.mouse.move(handleX, handleY);
+  await page.mouse.down();
+  await page.mouse.move(targetX, handleY, { steps: 12 });
+}
+
 async function loadRemoteReplay(page, replayUrl) {
   await page.goto(`/?rep=${encodeURIComponent(replayUrl)}`);
   await expect(page.locator("#rv_modal")).toBeHidden({ timeout: 30000 });
@@ -253,6 +270,51 @@ test("remote BASIL replay can scrub to the end without trapping", async ({ page 
   expect(endState.target).toBe(endState.end);
   expect(endState.cur).toBeGreaterThan(startFrame);
   expect(endState.modalTitle).not.toBe("Fatal error");
+  assertAllCleanLogs(logs);
+});
+
+test("real playback scrubber drag keeps a valid preview and jumps forward instead of resetting", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await loadReplay(page);
+  await page.waitForTimeout(1000);
+
+  const before = await page.evaluate(() => ({
+    current: _replay_get_value(2),
+    end: _replay_get_value(4),
+    timer: document.querySelector("#rv-rc-timer")?.textContent || "",
+    sliderValue: document.querySelector("#sliderOutput")?.value || ""
+  }));
+
+  await dragPlaybackScrubber(page, 0.75);
+
+  const during = await page.evaluate(() => ({
+    current: _replay_get_value(2),
+    target: _replay_get_value(3),
+    timer: document.querySelector("#rv-rc-timer")?.textContent || "",
+    sliderValue: document.querySelector("#sliderOutput")?.value || "",
+    sliderAria: document.querySelector("#game-slider-handle")?.getAttribute("aria-valuenow") || ""
+  }));
+
+  expect(during.timer).not.toContain("NaN");
+  expect(Number.isFinite(Number(during.sliderValue))).toBe(true);
+  expect(Number.isFinite(Number(during.sliderAria))).toBe(true);
+
+  await page.mouse.up();
+
+  const after = await page.evaluate(() => ({
+    current: _replay_get_value(2),
+    target: _replay_get_value(3),
+    end: _replay_get_value(4),
+    timer: document.querySelector("#rv-rc-timer")?.textContent || "",
+    sliderValue: Number(document.querySelector("#sliderOutput")?.value || "0")
+  }));
+
+  expect(after.timer).not.toContain("NaN");
+  expect(after.target).toBeGreaterThan(before.end * 0.5);
+  expect(after.current).toBeGreaterThan(before.current);
+  expect(after.sliderValue).toBeGreaterThan(100);
   assertAllCleanLogs(logs);
 });
 
@@ -1233,6 +1295,56 @@ test("settings modal uses audio and video tabs with immediate persistence", asyn
   await expect(page.locator('[data-settings-panel="video"]')).toBeVisible();
 
   assertCleanLogs(logs);
+});
+
+test("timestamped link button is hidden for local replays and hidden again after switching away from a rep query replay", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+  await expect(page.locator("#rv-rc-copy-link")).toBeHidden();
+
+  await loadRemoteReplay(page, basilReplayUrl);
+  await expect(page.locator("#rv-rc-copy-link")).toBeVisible();
+
+  await page.setInputFiles("#select_rep_file", defaultReplayPath);
+  await expect
+    .poll(() => page.evaluate(() => (typeof _replay_get_value === "function" ? _replay_get_value(4) : 0)), { timeout: 30000 })
+    .toBeGreaterThan(0);
+  await expect(page.locator("#rv-rc-copy-link")).toBeHidden();
+
+  assertAllCleanLogs(logs);
+});
+
+test("viewport export buttons are ordered link then clip then settings and video clip fields stack one per row", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadRemoteReplay(page, basilReplayUrl);
+  const buttonPositions = await page.evaluate(() =>
+    ["rv-rc-copy-link", "rv-rc-export", "rv-rc-export-settings"].map((id) => {
+      const rect = document.getElementById(id).getBoundingClientRect();
+      return { id, left: Math.round(rect.left), top: Math.round(rect.top) };
+    })
+  );
+  expect(buttonPositions[0].left).toBeLessThan(buttonPositions[1].left);
+  expect(buttonPositions[1].left).toBeLessThan(buttonPositions[2].left);
+
+  await forceClick(page, "#rv-rc-export-settings");
+  await forceClick(page, "#settings-tab-video");
+  const rows = await page.evaluate(() =>
+    ["export-width", "export-height", "export-fps", "export-bitrate"].map((id) => {
+      const group = document.getElementById(id).closest(".input-group");
+      const rect = group.getBoundingClientRect();
+      return { id, top: Math.round(rect.top), width: Math.round(rect.width), display: getComputedStyle(group).display };
+    })
+  );
+  const tops = rows.map((row) => row.top);
+  expect(new Set(tops).size).toBe(4);
+  expect(tops[0]).toBeLessThan(tops[1]);
+  expect(tops[1]).toBeLessThan(tops[2]);
+  expect(tops[2]).toBeLessThan(tops[3]);
+  expect(rows.every((row) => row.display === "flex")).toBe(true);
+
+  assertAllCleanLogs(logs);
 });
 
 test("music playlist uses the first player's race only", async ({ page }) => {
