@@ -591,6 +591,7 @@ extern "C" void ui_set_screen_center(int x, int y) {
 	if (m->ui.screen_pos.y < 0) m->ui.screen_pos.y = 0;
 	if (m->ui.screen_pos.x + (int)m->ui.view_width > m->ui.game_st.map_width) m->ui.screen_pos.x = m->ui.game_st.map_width - m->ui.view_width;
 	if (m->ui.screen_pos.x < 0) m->ui.screen_pos.x = 0;
+	m->ui.request_redraw();
 }
 
 extern "C" void ui_set_screen_center_manual(int x, int y) {
@@ -628,16 +629,19 @@ extern "C" void replay_set_value(int index, double value) {
 		break;
 	case 1:
 		m->ui.is_paused = value != 0.0;
+		m->ui.request_redraw();
 		break;
 	case 3:
 		m->ui.replay_frame = (int)value;
 		if (m->ui.replay_frame < 0) m->ui.replay_frame = 0;
 		if (m->ui.replay_frame > m->ui.replay_st.end_frame) m->ui.replay_frame = m->ui.replay_st.end_frame;
+		m->ui.request_redraw();
 		break;
 	case 6:
 		m->ui.replay_frame = (int)(m->ui.replay_st.end_frame * value);
 		if (m->ui.replay_frame < 0) m->ui.replay_frame = 0;
 		if (m->ui.replay_frame > m->ui.replay_st.end_frame) m->ui.replay_frame = m->ui.replay_st.end_frame;
+		m->ui.request_redraw();
 		break;
 	}
 }
@@ -661,6 +665,7 @@ extern "C" void observer_set_value(double value) {
 	if (m->auto_observer_enabled) {
 		m->reset_observer_runtime_state();
 	}
+	m->ui.request_redraw();
 }
 
 extern "C" double fog_of_war_get_value() {
@@ -672,6 +677,7 @@ extern "C" void fog_of_war_set_value(double value) {
 	if (!m) return;
 	m->fog_of_war_enabled = value != 0.0;
 	m->sync_fog_of_war();
+	m->ui.request_redraw();
 }
 
 extern "C" double fog_of_war_player_get_value(int player) {
@@ -697,6 +703,7 @@ extern "C" void fog_of_war_player_set_value(int player, double value) {
 	m->fog_of_war_player_mask = mask;
 	m->fog_of_war_player_mask_custom = true;
 	m->sync_fog_of_war();
+	m->ui.request_redraw();
 }
 
 extern "C" double force_red_blue_colors_get_value() {
@@ -707,6 +714,7 @@ extern "C" double force_red_blue_colors_get_value() {
 extern "C" void force_red_blue_colors_set_value(double value) {
 	if (!m) return;
 	m->force_red_blue_player_colors = value != 0.0;
+	m->ui.request_redraw();
 }
 
 #include <emscripten/bind.h>

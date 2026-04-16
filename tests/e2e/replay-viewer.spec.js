@@ -211,6 +211,64 @@ test("warmed homepage stays within the idle CPU budget", async ({ browser }) => 
   await context.close();
 });
 
+test("paused replay enters a low-CPU steady state and resumes cleanly on play", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await loadReplay(page);
+  await page.waitForTimeout(1500);
+
+  await page.locator("#rv-rc-play").click();
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        paused: _replay_get_value(1),
+        current: _replay_get_value(2),
+        target: _replay_get_value(3),
+        loopPaused: window.viewerMainLoopPausedForIdle === true
+      })),
+      { timeout: 10000 }
+    )
+    .toEqual({
+      paused: 1,
+      current: expect.any(Number),
+      target: expect.any(Number),
+      loopPaused: true
+    });
+
+  const pausedFrame = await page.evaluate(() => _replay_get_value(2));
+  await page.waitForTimeout(1000);
+  expect(await page.evaluate(() => _replay_get_value(2))).toBe(pausedFrame);
+  await page.waitForTimeout(1000);
+
+  const metrics = await collectIdlePerformanceMetrics(page, 5000);
+  expect(metrics.taskDelta).toBeLessThan(0.02);
+  expect(metrics.scriptDelta).toBeLessThan(0.01);
+  expect(metrics.layoutDelta).toBeLessThan(0.01);
+
+  await page.locator("#rv-rc-play").click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        paused: _replay_get_value(1),
+        current: _replay_get_value(2),
+        loopPaused: window.viewerMainLoopPausedForIdle === true
+      })),
+      { timeout: 10000 }
+    )
+    .toEqual({
+      paused: 0,
+      current: expect.any(Number),
+      loopPaused: false
+    });
+  await expect
+    .poll(() => page.evaluate(() => _replay_get_value(2)), { timeout: 10000 })
+    .toBeGreaterThan(pausedFrame);
+
+  assertAllCleanLogs(logs);
+});
+
 test("remote BASIL replay advances through the reported 21:18 local stall point", async ({ page }) => {
   const logs = await createLogCollectors(page);
 

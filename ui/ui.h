@@ -1828,6 +1828,11 @@ struct ui_functions: ui_util_functions {
 	std::chrono::high_resolution_clock::time_point last_fps;
 	int fps_counter = 0;
 	size_t scroll_speed_n = 0;
+	bool force_redraw = true;
+
+	void request_redraw() {
+		force_redraw = true;
+	}
 
 	void resize(int width, int height) {
 		if (!wnd && create_window) wnd.create("OpenBW", 0, 0, width, height);
@@ -1843,11 +1848,13 @@ struct ui_functions: ui_util_functions {
 		window_surface.reset();
 		indexed_surface.reset();
 		rgba_surface.reset();
+		request_redraw();
 	}
 
 	void set_minimap_reference_size(int width, int height) {
 		if (width > 0) minimap_reference_width = (size_t)width;
 		if (height > 0) minimap_reference_height = (size_t)height;
+		request_redraw();
 	}
 
 	a_vector<unit_id> current_selection;
@@ -1861,16 +1868,22 @@ struct ui_functions: ui_util_functions {
 		auto uid = get_unit_id(u);
 		if (std::find(current_selection.begin(), current_selection.end(), uid) != current_selection.end()) return;
 		current_selection.push_back(uid);
+		request_redraw();
 	}
 
 	void current_selection_clear() {
+		if (current_selection.empty()) return;
 		current_selection.clear();
+		request_redraw();
 	}
 
 	void current_selection_remove(const unit_t* u) {
 		auto uid = get_unit_id(u);
 		auto i = std::find(current_selection.begin(), current_selection.end(), uid);
-		if (i != current_selection.end()) current_selection.erase(i);
+		if (i != current_selection.end()) {
+			current_selection.erase(i);
+			request_redraw();
+		}
 	}
 
 	bool is_moving_minimap = false;
@@ -1886,6 +1899,8 @@ struct ui_functions: ui_util_functions {
 
 	void update() {
 		auto now = clock.now();
+		bool redraw_requested = force_redraw;
+		force_redraw = false;
 
 		if (now - last_fps >= std::chrono::seconds(1)) {
 			//ui::log("draw fps: %g\n", fps_counter / std::chrono::duration_cast<std::chrono::duration<double, std::ratio<1, 1>>>(now - last_fps).count());
@@ -2001,6 +2016,7 @@ struct ui_functions: ui_util_functions {
 					break;
 				case native_window::event_t::type_resize:
 					resize(e.width, e.height);
+					redraw_requested = true;
 					break;
 				case native_window::event_t::type_mouse_button_down:
 					if (e.button == 1) {
@@ -2017,6 +2033,7 @@ struct ui_functions: ui_util_functions {
 						is_dragging_screen = true;
 						drag_screen_pos = screen_pos + xy((fp16::integer(e.mouse_x) / view_scale).integer_part(), (fp16::integer(e.mouse_y) / view_scale).integer_part());
 					}
+					redraw_requested = true;
 					break;
 				case native_window::event_t::type_mouse_motion:
 					if (e.button_state & 1) {
@@ -2034,6 +2051,7 @@ struct ui_functions: ui_util_functions {
 					}
 
 					if (is_drag_selecting && ~e.button_state & 1) end_drag_select(false);
+					redraw_requested = true;
 					break;
 				case native_window::event_t::type_mouse_button_up:
 					if (e.button == 1) {
@@ -2045,6 +2063,7 @@ struct ui_functions: ui_util_functions {
 					} else if (e.button == 3) {
 						is_dragging_screen = false;
 					}
+					redraw_requested = true;
 					break;
 				case native_window::event_t::type_key_down:
 					//if (e.sym == 'q') {
@@ -2066,6 +2085,7 @@ struct ui_functions: ui_util_functions {
 						else replay_frame -= t;
 					}
 #endif
+					redraw_requested = true;
 					break;
 				}
 			}
@@ -2090,6 +2110,7 @@ struct ui_functions: ui_util_functions {
 				window_surface->set_blend_mode(native_window_drawing::blend_mode::none);
 				window_surface->set_alpha(0);
 			}
+			redraw_requested = true;
 		}
 
 		if (wnd) {
@@ -2109,6 +2130,7 @@ struct ui_functions: ui_util_functions {
 					if (wnd.get_key_state(79)) screen_pos.x += scroll_speed;
 					else if (wnd.get_key_state(80)) screen_pos.x -= scroll_speed;
 					if (screen_pos != prev_screen_pos) {
+						redraw_requested = true;
 						if (scroll_speed_n != scroll_speeds.size() - 1) ++scroll_speed_n;
 					} else scroll_speed_n = 0;
 				}
@@ -2120,20 +2142,33 @@ struct ui_functions: ui_util_functions {
 				int x = -1;
 				int y = -1;
 				wnd.get_cursor_pos(&x, &y);
-				if (x != -1) move_minimap(x, y);
+				if (x != -1) {
+					auto prev_screen_pos = screen_pos;
+					move_minimap(x, y);
+					if (screen_pos != prev_screen_pos) redraw_requested = true;
+				}
 			}
 			if (is_moving_replay_slider) {
 				int x = -1;
 				int y = -1;
 				wnd.get_cursor_pos(&x, &y);
-				if (x != -1) move_replay_slider(x, y);
+				if (x != -1) {
+					auto previous_replay_frame = replay_frame;
+					move_replay_slider(x, y);
+					if (replay_frame != previous_replay_frame) redraw_requested = true;
+				}
 			}
 		}
 
+		auto previous_screen_pos = screen_pos;
 		if (screen_pos.y + view_height > game_st.map_height) screen_pos.y = game_st.map_height - view_height;
 		if (screen_pos.y < 0) screen_pos.y = 0;
 		if (screen_pos.x + view_width > game_st.map_width) screen_pos.x = game_st.map_width - view_width;
 		if (screen_pos.x < 0) screen_pos.x = 0;
+		if (screen_pos != previous_screen_pos) redraw_requested = true;
+
+		bool playback_static = (is_paused || is_done()) && st.current_frame == replay_frame;
+		if (playback_static && !redraw_requested) return;
 
 		uint8_t* data = (uint8_t*)indexed_surface->lock();
 		draw_tiles(data, indexed_surface->pitch);
