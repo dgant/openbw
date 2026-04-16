@@ -139,7 +139,10 @@ test("local replay selection works even if chosen before MPQ buffers finish read
   const logs = await createLogCollectors(page);
 
   await page.goto("/");
-  await page.setInputFiles("#select_rep_file", defaultReplayPath);
+  const chooserPromise = page.waitForEvent("filechooser");
+  await page.locator("#select_replay_label").click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles(defaultReplayPath);
   await expect
     .poll(() => page.evaluate(() => (typeof _replay_get_value === "function" ? _replay_get_value(4) : 0)), { timeout: 30000 })
     .toBeGreaterThan(0);
