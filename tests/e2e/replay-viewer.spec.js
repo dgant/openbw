@@ -89,6 +89,14 @@ async function loadRemoteReplayAtFrame(page, replayUrl, frame) {
     .toBeGreaterThanOrEqual(frame);
 }
 
+async function expectStartupPlaybackToAdvance(page, options = {}) {
+  const { durationMs = 5000, minFrameDelta = 1 } = options;
+  const startFrame = await page.evaluate(() => _replay_get_value(2));
+  await page.waitForTimeout(durationMs);
+  const endFrame = await page.evaluate(() => _replay_get_value(2));
+  expect(endFrame).toBeGreaterThan(startFrame + minFrameDelta);
+}
+
 function assertCleanLogs({ pageErrors }) {
   expect(pageErrors).toEqual([]);
 }
@@ -97,7 +105,15 @@ test("boots with bundled MPQs and starts a replay from drag and drop", async ({ 
   const logs = await createLogCollectors(page);
 
   await loadReplay(page);
-  await expect.poll(() => page.evaluate(() => _replay_get_value(2)), { timeout: 30000 }).toBeGreaterThan(0);
+  await expectStartupPlaybackToAdvance(page);
+  assertCleanLogs(logs);
+});
+
+test("remote replay loaded via rep query keeps advancing after startup", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadRemoteReplay(page, basilReplayUrl);
+  await expectStartupPlaybackToAdvance(page);
   assertCleanLogs(logs);
 });
 

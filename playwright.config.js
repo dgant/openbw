@@ -11,7 +11,13 @@ module.exports = defineConfig({
     headless: true,
     launchOptions: {
       executablePath: "/usr/bin/chromium",
-      args: ["--no-sandbox", "--disable-dev-shm-usage"]
+      args: [
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding"
+      ]
     }
   }
 });
