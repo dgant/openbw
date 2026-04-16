@@ -269,6 +269,92 @@ test("paused replay enters a low-CPU steady state and resumes cleanly on play", 
   assertAllCleanLogs(logs);
 });
 
+test("paused replay keeps a visible scrubber track and dragging it resumes seeking", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await loadReplay(page);
+  await page.waitForTimeout(1500);
+  await page.locator("#rv-rc-play").click();
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        paused: _replay_get_value(1),
+        current: _replay_get_value(2),
+        target: _replay_get_value(3),
+        loopPaused: window.viewerMainLoopPausedForIdle === true
+      })),
+      { timeout: 10000 }
+    )
+    .toEqual({
+      paused: 1,
+      current: expect.any(Number),
+      target: expect.any(Number),
+      loopPaused: true
+    });
+
+  const trackState = await page.evaluate(() => {
+    const slider = document.getElementById("game-slider");
+    const rect = slider.getBoundingClientRect();
+    const style = getComputedStyle(slider);
+    return {
+      width: rect.width,
+      height: rect.height,
+      backgroundColor: style.backgroundColor,
+      opacity: style.opacity,
+      visibility: style.visibility
+    };
+  });
+  expect(trackState.width).toBeGreaterThan(100);
+  expect(trackState.height).toBeGreaterThan(0);
+  expect(trackState.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+  expect(trackState.opacity).toBe("1");
+  expect(trackState.visibility).toBe("visible");
+
+  const pausedFrame = await page.evaluate(() => _replay_get_value(2));
+  await dragPlaybackScrubber(page, 0.75);
+  const during = await page.evaluate(() => ({
+    paused: _replay_get_value(1),
+    current: _replay_get_value(2),
+    target: _replay_get_value(3),
+    loopPaused: window.viewerMainLoopPausedForIdle === true,
+    timer: document.querySelector("#rv-rc-timer")?.textContent || ""
+  }));
+  expect(during.loopPaused).toBe(false);
+  expect(during.target).toBeGreaterThan(pausedFrame);
+  expect(during.timer).not.toContain("NaN");
+  await page.mouse.up();
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        paused: _replay_get_value(1),
+        current: _replay_get_value(2),
+        target: _replay_get_value(3),
+        loopPaused: window.viewerMainLoopPausedForIdle === true
+      })),
+      { timeout: 10000 }
+    )
+    .toEqual({
+      paused: 1,
+      current: expect.any(Number),
+      target: expect.any(Number),
+      loopPaused: false
+    });
+
+  const after = await page.evaluate(() => ({
+    current: _replay_get_value(2),
+    target: _replay_get_value(3),
+    timer: document.querySelector("#rv-rc-timer")?.textContent || ""
+  }));
+  expect(after.current).toBeGreaterThan(pausedFrame);
+  expect(after.target).toBeGreaterThan(pausedFrame);
+  expect(after.timer).not.toContain("NaN");
+
+  assertAllCleanLogs(logs);
+});
+
 test("remote BASIL replay advances through the reported 21:18 local stall point", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
