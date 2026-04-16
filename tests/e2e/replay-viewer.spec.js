@@ -71,6 +71,31 @@ async function loadReplay(page, replayPath = defaultReplayPath) {
   throw lastError;
 }
 
+async function waitForHomepageReady(page) {
+  await page.goto("/");
+  await expect(page.locator("#rv_modal")).toBeHidden({ timeout: 30000 });
+  await expect(page.locator("#select_replay_label")).not.toHaveClass(/disabled/, { timeout: 30000 });
+  await expect(page.locator(".pregame-dropzone")).toContainText("Browse files");
+}
+
+async function collectIdlePerformanceMetrics(page, durationMs = 5000) {
+  const client = await page.context().newCDPSession(page);
+  await client.send("Performance.enable");
+  const readMetrics = async () => {
+    const response = await client.send("Performance.getMetrics");
+    return Object.fromEntries(response.metrics.map((metric) => [metric.name, metric.value]));
+  };
+  const start = await readMetrics();
+  await page.waitForTimeout(durationMs);
+  const end = await readMetrics();
+  return {
+    taskDelta: (end.TaskDuration || 0) - (start.TaskDuration || 0),
+    scriptDelta: (end.ScriptDuration || 0) - (start.ScriptDuration || 0),
+    layoutDelta: (end.LayoutDuration || 0) - (start.LayoutDuration || 0),
+    jsHeapUsed: end.JSHeapUsedSize || 0
+  };
+}
+
 async function forceClick(page, selector) {
   await page.evaluate((sel) => {
     const node = document.querySelector(sel);
@@ -148,6 +173,25 @@ test("local replay selection works even if chosen before MPQ buffers finish read
     .toBeGreaterThan(0);
   await expectStartupPlaybackToAdvance(page);
   assertAllCleanLogs(logs);
+});
+
+test("warmed homepage stays within the idle CPU budget", async ({ browser }) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const logs = await createLogCollectors(page);
+  await waitForHomepageReady(page);
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.locator("#rv_modal")).toBeHidden({ timeout: 30000 });
+  await expect(page.locator("#select_replay_label")).not.toHaveClass(/disabled/, { timeout: 30000 });
+  await page.waitForTimeout(1000);
+
+  const metrics = await collectIdlePerformanceMetrics(page, 5000);
+  expect(metrics.taskDelta).toBeLessThan(0.05);
+  expect(metrics.scriptDelta).toBeLessThan(0.02);
+  expect(metrics.layoutDelta).toBeLessThan(0.01);
+  assertAllCleanLogs(logs);
+
+  await context.close();
 });
 
 test("remote BASIL replay advances through the reported 21:18 local stall point", async ({ page }) => {
