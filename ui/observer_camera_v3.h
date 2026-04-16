@@ -80,7 +80,7 @@ inline bool main_t::observer_v3_focus_nukes(std::chrono::steady_clock::time_poin
 		for (unit_t* unit : list) {
 			if (!unit || !unit->sprite) continue;
 			if (!ui.unit_is(unit, UnitTypes::Terran_Nuclear_Missile)) continue;
-			if (unit->velocity.y == 0_fp8) continue;
+			if (unit->velocity.y <= 0_fp8) continue;
 			observer_v3_nuke_hold_position = unit->sprite->position;
 			observer_v3_nuke_hold_until = now + std::chrono::seconds(6);
 			observer_v3_apply_center(observer_v3_nuke_hold_position, true);

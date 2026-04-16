@@ -288,6 +288,9 @@ struct main_t {
 		if (std::chrono::steady_clock::now() < observer_manual_override_until) return;
 		if (observer_last_frame_seen != -1 && ui.st.current_frame < observer_last_frame_seen) {
 			reset_observer_runtime_state();
+		} else if (ui.st.current_frame == observer_last_frame_seen) {
+			observer_v3_last_update_time = std::chrono::steady_clock::time_point::min();
+			return;
 		}
 		observer_last_frame_seen = ui.st.current_frame;
 		update_observer_camera_v3(std::chrono::steady_clock::now());
