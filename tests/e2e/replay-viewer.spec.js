@@ -41,7 +41,16 @@ async function createLogCollectors(page, options = {}) {
       }
     });
   }
-  return { pageErrors: [] };
+  const logs = { pageErrors: [], consoleErrors: [] };
+  page.on("console", (msg) => {
+    if (msg.type() === "error") {
+      logs.consoleErrors.push(msg.text());
+    }
+  });
+  page.on("pageerror", (err) => {
+    logs.pageErrors.push(String(err));
+  });
+  return logs;
 }
 
 async function loadReplay(page, replayPath = defaultReplayPath) {
@@ -101,12 +110,21 @@ function assertCleanLogs({ pageErrors }) {
   expect(pageErrors).toEqual([]);
 }
 
+function assertCleanConsoleErrors({ consoleErrors }) {
+  expect(consoleErrors).toEqual([]);
+}
+
+function assertAllCleanLogs(logs) {
+  assertCleanLogs(logs);
+  assertCleanConsoleErrors(logs);
+}
+
 test("boots with bundled MPQs and starts a replay from drag and drop", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
   await loadReplay(page);
   await expectStartupPlaybackToAdvance(page);
-  assertCleanLogs(logs);
+  assertAllCleanLogs(logs);
 });
 
 test("remote replay loaded via rep query keeps advancing after startup", async ({ page }) => {
@@ -114,7 +132,19 @@ test("remote replay loaded via rep query keeps advancing after startup", async (
 
   await loadRemoteReplay(page, basilReplayUrl);
   await expectStartupPlaybackToAdvance(page);
-  assertCleanLogs(logs);
+  assertAllCleanLogs(logs);
+});
+
+test("local replay selection works even if chosen before MPQ buffers finish reading", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.goto("/");
+  await page.setInputFiles("#select_rep_file", defaultReplayPath);
+  await expect
+    .poll(() => page.evaluate(() => (typeof _replay_get_value === "function" ? _replay_get_value(4) : 0)), { timeout: 30000 })
+    .toBeGreaterThan(0);
+  await expectStartupPlaybackToAdvance(page);
+  assertAllCleanLogs(logs);
 });
 
 test("remote BASIL replay advances through the reported 21:18 local stall point", async ({ page }) => {
@@ -149,7 +179,7 @@ test("remote BASIL replay advances through the reported 21:18 local stall point"
   expect(endState.target).toBeGreaterThanOrEqual(30500);
   expect(endState.paused).toBe(0);
   expect(endState.modalTitle).not.toBe("Fatal error");
-  assertCleanLogs(logs);
+  assertAllCleanLogs(logs);
 });
 
 test("remote BASIL replay can scrub to the end without trapping", async ({ page }) => {
@@ -176,7 +206,7 @@ test("remote BASIL replay can scrub to the end without trapping", async ({ page 
   expect(endState.target).toBe(endState.end);
   expect(endState.cur).toBeGreaterThan(startFrame);
   expect(endState.modalTitle).not.toBe("Fatal error");
-  assertCleanLogs(logs);
+  assertAllCleanLogs(logs);
 });
 
 test("basic HUD toggles and hotkeys work during replay playback", async ({ page }) => {
