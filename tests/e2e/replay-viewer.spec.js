@@ -104,6 +104,22 @@ async function forceClick(page, selector) {
   }, selector);
 }
 
+async function getFooterVolumeHandleTop(page) {
+  return page.evaluate(() => {
+    const slider = document.querySelector("#volume-slider");
+    const handle = document.querySelector("#volume-slider-handle");
+    if (!slider || !handle) {
+      throw new Error("Footer volume slider geometry is unavailable");
+    }
+    const sliderRect = slider.getBoundingClientRect();
+    const handleRect = handle.getBoundingClientRect();
+    return {
+      handleTop: handleRect.top - sliderRect.top,
+      sliderHeight: sliderRect.height
+    };
+  });
+}
+
 async function dragPlaybackScrubber(page, fraction) {
   const slider = page.locator("#game-slider");
   const handle = page.locator("#game-slider-handle");
@@ -679,6 +695,38 @@ test("volume and mute settings persist across reloads", async ({ page }) => {
       mutedClass: expect.stringContaining("rv-rc-muted"),
       output: "27"
     });
+
+  assertCleanLogs(logs);
+});
+
+test("footer volume hover slider visibly tracks overall volume from settings", async ({ page }) => {
+  const logs = await createLogCollectors(page, { disableAudio: false });
+
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await loadReplay(page);
+
+  await forceClick(page, "#rv-rc-export-settings");
+  await forceClick(page, "#settings-tab-audio");
+  await page.fill("#audio-overall-slider", "25");
+  await page.dispatchEvent("#audio-overall-slider", "input");
+  await forceClick(page, "#export_settings .close-button");
+  await page.hover("#rv-rc-sound");
+  await expect(page.locator("#volume-slider-wrapper")).toBeVisible();
+  const lowVolume = await getFooterVolumeHandleTop(page);
+
+  await forceClick(page, "#rv-rc-export-settings");
+  await forceClick(page, "#settings-tab-audio");
+  await page.fill("#audio-overall-slider", "75");
+  await page.dispatchEvent("#audio-overall-slider", "input");
+  await forceClick(page, "#export_settings .close-button");
+  await page.hover("#rv-rc-sound");
+  await expect(page.locator("#volume-slider-wrapper")).toBeVisible();
+  const highVolume = await getFooterVolumeHandleTop(page);
+
+  expect(lowVolume.sliderHeight).toBeGreaterThan(0);
+  expect(lowVolume.handleTop - highVolume.handleTop).toBeGreaterThan(20);
+  await expect(page.locator("#volumeOutput")).toHaveValue("75");
+  await expect(page.locator("#volume-slider-handle")).toHaveAttribute("aria-valuenow", "75");
 
   assertCleanLogs(logs);
 });
