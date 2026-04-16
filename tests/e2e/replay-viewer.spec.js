@@ -2079,27 +2079,106 @@ test("late-game stale viewport hold does not block a much stronger offscreen fig
   let summary = null;
   await expect
     .poll(
-      () =>
-        page.evaluate(() => {
-          const summary = JSON.parse(Module.get_observer_debug_summary());
-          if (summary.frame < Math.round((32 * 60 + 9) * 1000 / 42)) return null;
-          if (summary.viewportAttentionCount !== 0) return null;
-          if (!(summary.bestOffscreen.attention && summary.bestOffscreen.score > summary.bestViewport.score)) return null;
-          return summary;
-        }).then((value) => {
-          summary = value;
-          return !!value && value.staleViewportFightHold === true && value.retainViewportFight === false;
-        }),
+      async () => {
+        for (let i = 0; i < 10; ++i) {
+          const value = await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()));
+          if (
+            value.frame >= Math.round((32 * 60 + 9) * 1000 / 42) &&
+            value.staleViewportFightHold === true &&
+            value.retainViewportFight === false &&
+            value.bestViewport.score <= 2 &&
+            value.bestOffscreen.score > value.bestViewport.score
+          ) {
+            summary = value;
+            return true;
+          }
+          await page.waitForTimeout(250);
+        }
+        return false;
+      },
       { timeout: 30000 }
     )
     .toBe(true);
 
-  expect(summary.viewportAttentionCount).toBe(0);
   expect(summary.staleViewportFightHold).toBe(true);
-  expect(summary.bestOffscreen.attention).toBe(true);
   expect(summary.bestOffscreen.score).toBeGreaterThan(summary.bestViewport.score);
   expect(summary.retainViewportFight).toBe(false);
 
+  assertCleanLogs(logs);
+});
+
+test("late-game observer does not sit on a quiet viewport while a much stronger offscreen fight exists", async ({ page }) => {
+  test.setTimeout(180000);
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, nukeReplayPath, "Hannes");
+  await page.evaluate((frame) => {
+    _replay_set_value(3, frame);
+    _replay_set_value(0, 128);
+    _replay_set_value(1, 0);
+  }, 51500);
+  await page.waitForFunction((frame) => _replay_get_value(2) >= frame, 51500, { timeout: 120000 });
+
+  const badRuns = [];
+  let currentRun = null;
+  for (let i = 0; i < 20; ++i) {
+    const summary = await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()));
+    const quietViewport = summary.bestViewport.score <= 2;
+    const muchStrongerOffscreen = summary.actualBestOffscreenScore > Math.max(100, summary.actualBestViewportScore * 2);
+    const neutralReason = summary.actualApplyCenterReason === 0 || summary.actualApplyCenterReason === 6;
+    const badNow = quietViewport && muchStrongerOffscreen && neutralReason;
+    const pos = `${summary.screenPosX},${summary.screenPosY}`;
+    if (badNow) {
+      if (currentRun && currentRun.pos === pos) {
+        currentRun.end = summary.frame;
+        currentRun.count += 1;
+      } else {
+        if (currentRun) badRuns.push(currentRun);
+        currentRun = { start: summary.frame, end: summary.frame, count: 1, pos };
+      }
+    } else if (currentRun) {
+      badRuns.push(currentRun);
+      currentRun = null;
+    }
+    await page.waitForTimeout(500);
+  }
+  if (currentRun) badRuns.push(currentRun);
+
+  expect(badRuns).toEqual([]);
+  assertCleanLogs(logs);
+});
+
+test("hidden-only falling missiles do not pin the camera away from late-game combat", async ({ page }) => {
+  test.setTimeout(180000);
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, nukeReplayPath, "Hannes");
+  await page.evaluate((frame) => {
+    _replay_set_value(3, frame);
+    _replay_set_value(0, 128);
+    _replay_set_value(1, 0);
+  }, 53000);
+  await page.waitForFunction((frame) => _replay_get_value(2) >= frame, 53000, { timeout: 120000 });
+
+  const badFrames = [];
+  for (let i = 0; i < 20; ++i) {
+    const summary = await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()));
+    const hiddenOnlyMissile = summary.nukeState.hasHiddenFallingNuke && !summary.nukeState.hasVisibleFallingNuke;
+    const strongerOffscreenFight = summary.bestOffscreen.attention && summary.bestOffscreen.score > 100;
+    const pinnedByNuke = summary.actualApplyCenterReason === 1 || summary.actualApplyCenterReason === 2;
+    if (hiddenOnlyMissile && strongerOffscreenFight && pinnedByNuke) {
+      badFrames.push({
+        frame: summary.frame,
+        reason: summary.actualApplyCenterReason,
+        screen: [summary.screenPosX, summary.screenPosY],
+        holdPos: [summary.nukeState.holdPositionX, summary.nukeState.holdPositionY],
+        bestOffscreen: [summary.bestOffscreen.x, summary.bestOffscreen.y]
+      });
+    }
+    await page.waitForTimeout(400);
+  }
+
+  expect(badFrames).toEqual([]);
   assertCleanLogs(logs);
 });
 

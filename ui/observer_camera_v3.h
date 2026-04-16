@@ -67,7 +67,9 @@ inline void main_t::observer_v3_apply_center(xy pos, bool reset_velocity) {
 		observer_v3_velocity_x = 0.0;
 		observer_v3_velocity_y = 0.0;
 	}
+	observer_v3_last_apply_center_input_position = pos;
 	ui.screen_pos = pos - observer_view_center_offset();
+	observer_v3_last_apply_center_unclamped_screen_pos = ui.screen_pos;
 	clamp_screen_pos();
 	observer_current_camera_position = observer_view_center_position();
 	observer_focus_position = observer_current_camera_position;
@@ -75,22 +77,23 @@ inline void main_t::observer_v3_apply_center(xy pos, bool reset_velocity) {
 	observer_v3_camera_y = (double)observer_current_camera_position.y;
 }
 
-inline bool main_t::observer_v3_focus_nukes(std::chrono::steady_clock::time_point now) {
-	auto maybe_focus_falling_nuke = [&](auto&& list) -> bool {
+inline bool main_t::observer_v3_focus_nukes() {
+	auto maybe_focus_visible_falling_nuke = [&](auto&& list) -> bool {
 		for (unit_t* unit : list) {
 			if (!unit || !unit->sprite) continue;
 			if (!ui.unit_is(unit, UnitTypes::Terran_Nuclear_Missile)) continue;
 			if (unit->velocity.y <= 0_fp8) continue;
 			observer_v3_nuke_hold_position = unit->sprite->position;
-			observer_v3_nuke_hold_until = now + std::chrono::seconds(6);
+			observer_v3_nuke_hold_until_frame = ui.st.current_frame + 6 * 24;
+			observer_v3_last_apply_center_reason = 1;
 			observer_v3_apply_center(observer_v3_nuke_hold_position, true);
 			return true;
 		}
 		return false;
 	};
-	if (maybe_focus_falling_nuke(ptr(ui.st.visible_units))) return true;
-	if (maybe_focus_falling_nuke(ptr(ui.st.hidden_units))) return true;
-	if (now < observer_v3_nuke_hold_until) {
+	if (maybe_focus_visible_falling_nuke(ptr(ui.st.visible_units))) return true;
+	if (observer_v3_nuke_hold_until_frame >= 0 && ui.st.current_frame < observer_v3_nuke_hold_until_frame) {
+		observer_v3_last_apply_center_reason = 2;
 		observer_v3_apply_center(observer_v3_nuke_hold_position, true);
 		return true;
 	}
@@ -123,20 +126,20 @@ inline bool main_t::observer_v3_focus_nukes(std::chrono::steady_clock::time_poin
 		}
 	};
 	find_nuke_dot(ptr(ui.st.visible_units));
-	if (!has_nuke_dot) find_nuke_dot(ptr(ui.st.hidden_units));
 	maybe_find_nuke_paint_ghost(ptr(ui.st.visible_units), has_nuke_dot, nuke_dot_position);
-	maybe_find_nuke_paint_ghost(ptr(ui.st.hidden_units), has_nuke_dot, nuke_dot_position);
-	if (!has_nuke_dot) {
-		if (!nearest_ghost || !nearest_ghost->sprite) return false;
-		observer_v3_apply_center(nearest_ghost->sprite->position, true);
+	if (has_nuke_dot) {
+		if (nearest_ghost && nearest_ghost->sprite) {
+			nuke_dot_position = xy(
+				(nuke_dot_position.x + nearest_ghost->sprite->position.x) / 2,
+				(nuke_dot_position.y + nearest_ghost->sprite->position.y) / 2);
+		}
+		observer_v3_last_apply_center_reason = 4;
+		observer_v3_apply_center(nuke_dot_position, true);
 		return true;
 	}
-	if (nearest_ghost && nearest_ghost->sprite) {
-		nuke_dot_position = xy(
-			(nuke_dot_position.x + nearest_ghost->sprite->position.x) / 2,
-			(nuke_dot_position.y + nearest_ghost->sprite->position.y) / 2);
-	}
-	observer_v3_apply_center(nuke_dot_position, true);
+	if (!nearest_ghost || !nearest_ghost->sprite) return false;
+	observer_v3_last_apply_center_reason = 3;
+	observer_v3_apply_center(nearest_ghost->sprite->position, true);
 	return true;
 }
 
@@ -182,13 +185,14 @@ inline void main_t::observer_v3_collect_eligible_units(T&& list, a_vector<unit_t
 	}
 }
 
-inline void main_t::observer_v3_update_interest_queue(const a_vector<unit_t*>& eligible_units) {
+inline void main_t::observer_v3_update_interest_queue(const a_vector<unit_t*>& eligible_units, int frame_delta) {
 	if (eligible_units.empty()) {
 		observer_v3_interest_cursor = 0;
 		return;
 	}
 	if (observer_v3_interest_cursor >= eligible_units.size()) observer_v3_interest_cursor = 0;
-	size_t updates = std::min<size_t>(50, eligible_units.size());
+	if (frame_delta < 1) frame_delta = 1;
+	size_t updates = std::min<size_t>(eligible_units.size(), (size_t)frame_delta * 50);
 	for (size_t i = 0; i != updates; ++i) {
 		size_t index = (observer_v3_interest_cursor + i) % eligible_units.size();
 		observer_v3_compute_interest(eligible_units[index]);
@@ -196,9 +200,10 @@ inline void main_t::observer_v3_update_interest_queue(const a_vector<unit_t*>& e
 	observer_v3_interest_cursor = (observer_v3_interest_cursor + updates) % eligible_units.size();
 }
 
-inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& best_viewport_score, bool live_viewport_fight, bool stale_viewport_fight_hold) {
-	if (now < observer_v3_jump_cooldown_until) return 0;
+inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, xy& direct_pan_target, double& best_viewport_score, bool live_viewport_fight, bool stale_viewport_fight_hold) {
+	if (observer_v3_jump_cooldown_until_frame >= 0 && ui.st.current_frame < observer_v3_jump_cooldown_until_frame) return 0;
 	unit_t* best_unit = nullptr;
+	unit_t* best_offscreen_unit = nullptr;
 	double best_score = -1.0;
 	best_viewport_score = 0.0;
 	double best_offscreen_score = 0.0;
@@ -206,36 +211,53 @@ inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eli
 		int unit_key = (int)ui.get_unit_id_32(unit).raw_value;
 		double score = observer_v3_effective_interest_score(unit);
 		if (observer_position_in_viewport(unit->sprite->position) && score > best_viewport_score) best_viewport_score = score;
-		if (!observer_position_in_viewport(unit->sprite->position) && score > best_offscreen_score) best_offscreen_score = score;
+		if (!observer_position_in_viewport(unit->sprite->position) && score > best_offscreen_score) {
+			best_offscreen_score = score;
+			best_offscreen_unit = unit;
+		}
 		if (score > best_score) {
 			best_score = score;
 			best_unit = unit;
 		}
 	}
+	observer_v3_last_best_offscreen_score = best_offscreen_score;
 	if (!best_unit || !best_unit->sprite) return 0;
+	bool much_stronger_offscreen = best_offscreen_score > best_viewport_score * 2.0;
 	if (observer_position_in_viewport(best_unit->sprite->position)) {
+		if (best_offscreen_unit && best_offscreen_unit->sprite && much_stronger_offscreen) {
+			observer_v3_last_apply_center_reason = 5;
+			observer_v3_apply_center(best_offscreen_unit->sprite->position, true);
+			observer_v3_jump_cooldown_until_frame = ui.st.current_frame +
+				(int)std::lround((5.0 + std::min(5.0, best_viewport_score)) * 24.0);
+			return 2;
+		}
 		direct_pan_target = best_unit->sprite->position;
 		return 1;
 	}
-	if (live_viewport_fight) return 0;
+	if (live_viewport_fight && !much_stronger_offscreen) return 0;
 	if (stale_viewport_fight_hold && best_viewport_score >= best_offscreen_score) return 0;
+	observer_v3_last_apply_center_reason = 6;
 	observer_v3_apply_center(best_unit->sprite->position, true);
-	observer_v3_jump_cooldown_until = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-		std::chrono::duration<double>(5.0 + std::min(5.0, best_viewport_score)));
+	observer_v3_jump_cooldown_until_frame = ui.st.current_frame +
+		(int)std::lround((5.0 + std::min(5.0, best_viewport_score)) * 24.0);
 	return 2;
 }
 
-inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_point now) {
-	double dt = observer_v3_last_update_time == std::chrono::steady_clock::time_point::min()
-		? (1.0 / 60.0)
-		: std::chrono::duration_cast<std::chrono::duration<double>>(now - observer_v3_last_update_time).count();
+inline void main_t::observer_v3_update_motion() {
+	double dt = observer_v3_last_update_frame == -1
+		? (1.0 / 24.0)
+		: (double)(ui.st.current_frame - observer_v3_last_update_frame) / 24.0;
+	int frame_delta = observer_v3_last_update_frame == -1 ? 1 : ui.st.current_frame - observer_v3_last_update_frame;
+	if (frame_delta < 1) frame_delta = 1;
 	if (dt < 0.0) dt = 0.0;
-	if (dt > 0.25) dt = 0.25;
-	observer_v3_last_update_time = now;
+	if (dt > 2.0) dt = 2.0;
+	observer_v3_last_update_frame = ui.st.current_frame;
+	observer_v3_last_action = 0;
+	observer_v3_last_target_position = observer_current_camera_position;
 
 	a_vector<unit_t*> eligible_units;
 	observer_v3_collect_eligible_units(ptr(ui.st.visible_units), eligible_units);
-	observer_v3_update_interest_queue(eligible_units);
+	observer_v3_update_interest_queue(eligible_units, frame_delta);
 	if (eligible_units.empty()) {
 		double velocity_length = std::sqrt(observer_v3_velocity_x * observer_v3_velocity_x + observer_v3_velocity_y * observer_v3_velocity_y);
 		if (velocity_length > 0.0) {
@@ -252,15 +274,27 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 		for (unit_t* unit : eligible_units) {
 			if (!unit || !unit->sprite) continue;
 			if (!observer_position_in_viewport(unit->sprite->position)) continue;
-			if (unit_has_v3_attention_status(unit)) ++viewport_attention_count;
+			if (!unit_has_v3_attention_status(unit)) continue;
+			if (ui.ut_worker(unit)) continue;
+			if (!ui.unit_can_attack(unit)) continue;
+			++viewport_attention_count;
 		}
 		if (viewport_attention_count != 0) {
-			observer_v3_viewport_fight_hold_until = now + std::chrono::milliseconds(6000);
+			observer_v3_viewport_fight_hold_until_frame = ui.st.current_frame + 6 * 24;
 		}
 		bool live_viewport_fight = viewport_attention_count != 0;
-		bool stale_viewport_fight_hold = !live_viewport_fight && now < observer_v3_viewport_fight_hold_until;
-		int jump_action = observer_v3_try_jump_to_interest(eligible_units, now, direct_pan_target, best_viewport_score, live_viewport_fight, stale_viewport_fight_hold);
+		bool stale_viewport_fight_hold = !live_viewport_fight &&
+			observer_v3_viewport_fight_hold_until_frame >= 0 &&
+			ui.st.current_frame < observer_v3_viewport_fight_hold_until_frame;
+		observer_v3_last_best_viewport_score = best_viewport_score;
+		observer_v3_last_best_offscreen_score = 0.0;
+		observer_v3_last_live_viewport_fight = live_viewport_fight;
+		observer_v3_last_stale_viewport_fight_hold = stale_viewport_fight_hold;
+		int jump_action = observer_v3_try_jump_to_interest(eligible_units, direct_pan_target, best_viewport_score, live_viewport_fight, stale_viewport_fight_hold);
+		observer_v3_last_best_viewport_score = best_viewport_score;
 		if (jump_action == 1) {
+			observer_v3_last_action = 1;
+			observer_v3_last_target_position = direct_pan_target;
 			observer_focus_position = direct_pan_target;
 			double dx = (double)direct_pan_target.x - observer_v3_camera_x;
 			double dy = (double)direct_pan_target.y - observer_v3_camera_y;
@@ -278,13 +312,29 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 			double half_view_width = (double)ui.view_width;
 			double half_view_height = (double)ui.view_height;
 			double max_velocity = 9.6 * (1000.0 / 42.0) * std::max(1.0 / 128.0, ui.game_speed.raw_value / 256.0);
-			double remaining_jump_cooldown = std::max(
-				0.0,
-				std::chrono::duration_cast<std::chrono::duration<double>>(observer_v3_jump_cooldown_until - now).count());
+			double remaining_jump_cooldown = observer_v3_jump_cooldown_until_frame >= 0 && ui.st.current_frame < observer_v3_jump_cooldown_until_frame
+				? (double)(observer_v3_jump_cooldown_until_frame - ui.st.current_frame) / 24.0
+				: 0.0;
+			double best_offscreen_high_interest_score = 0.0;
+			xy best_offscreen_high_interest_target{};
+			bool use_high_interest_only = false;
+			for (unit_t* unit : eligible_units) {
+				if (!unit || !unit->sprite) continue;
+				if (observer_position_in_viewport(unit->sprite->position)) continue;
+				double score = observer_v3_effective_interest_score(unit);
+				if (score > best_offscreen_high_interest_score) {
+					best_offscreen_high_interest_score = score;
+					best_offscreen_high_interest_target = unit->sprite->position;
+				}
+			}
+			if (!live_viewport_fight && best_offscreen_high_interest_score > 100.0 && best_offscreen_high_interest_score > best_viewport_score) {
+				use_high_interest_only = true;
+			}
 			for (unit_t* unit : eligible_units) {
 				if (!unit || !unit->sprite) continue;
 				double score = observer_v3_effective_interest_score(unit);
 				if (live_viewport_fight && !observer_position_in_viewport(unit->sprite->position)) continue;
+				if (use_high_interest_only && score <= 100.0) continue;
 				double dx = (double)unit->sprite->position.x - camera_center.x;
 				double dy = (double)unit->sprite->position.y - camera_center.y;
 				if (std::abs(dx) > half_view_width || std::abs(dy) > half_view_height) continue;
@@ -309,10 +359,13 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 				weighted_x += weight * unit->sprite->position.x;
 				weighted_y += weight * unit->sprite->position.y;
 			}
-			if (weight_sum > 0.0) {
-				xy target = xy((int)std::lround(weighted_x / weight_sum), (int)std::lround(weighted_y / weight_sum));
+			if (weight_sum > 0.0 || use_high_interest_only) {
+				xy target = weight_sum > 0.0
+					? xy((int)std::lround(weighted_x / weight_sum), (int)std::lround(weighted_y / weight_sum))
+					: best_offscreen_high_interest_target;
 				observer_focus_position = target;
 				if (observer_position_in_middle_third(target)) {
+					observer_v3_last_target_position = target;
 					double velocity_length = std::sqrt(observer_v3_velocity_x * observer_v3_velocity_x + observer_v3_velocity_y * observer_v3_velocity_y);
 					if (velocity_length > 0.0) {
 						double decel = 128.0 * dt;
@@ -322,6 +375,8 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 						observer_v3_velocity_y *= scale;
 					}
 				} else {
+					observer_v3_last_action = 3;
+					observer_v3_last_target_position = target;
 					double dx = (double)target.x - observer_v3_camera_x;
 					double dy = (double)target.y - observer_v3_camera_y;
 					double length = std::sqrt(dx * dx + dy * dy);
@@ -332,6 +387,9 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 					}
 				}
 			}
+		} else if (jump_action == 2) {
+			observer_v3_last_action = 2;
+			observer_v3_last_target_position = observer_current_camera_position;
 		}
 	}
 
@@ -348,21 +406,22 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 	observer_current_camera_position = xy((int)std::lround(observer_v3_camera_x), (int)std::lround(observer_v3_camera_y));
 	ui.screen_pos = observer_current_camera_position - observer_view_center_offset();
 	clamp_screen_pos();
+	observer_v3_last_applied_screen_pos = ui.screen_pos;
 	observer_current_camera_position = observer_view_center_position();
 	observer_focus_position = observer_current_camera_position;
 	observer_v3_camera_x = (double)observer_current_camera_position.x;
 	observer_v3_camera_y = (double)observer_current_camera_position.y;
 }
 
-inline void main_t::update_observer_camera_v3(std::chrono::steady_clock::time_point now) {
+inline void main_t::update_observer_camera_v3() {
 	initialize_observer_camera();
-	if (observer_v3_last_update_time == std::chrono::steady_clock::time_point::min()) {
+	if (observer_v3_last_update_frame == -1) {
 		observer_v3_camera_x = (double)observer_current_camera_position.x;
 		observer_v3_camera_y = (double)observer_current_camera_position.y;
 	}
-	if (observer_v3_focus_nukes(now)) {
-		observer_v3_last_update_time = now;
+	if (observer_v3_focus_nukes()) {
+		observer_v3_last_update_frame = ui.st.current_frame;
 		return;
 	}
-	observer_v3_update_motion(now);
+	observer_v3_update_motion();
 }
