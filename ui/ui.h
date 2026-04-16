@@ -654,7 +654,7 @@ struct ui_functions: ui_util_functions {
 		}
 	}
 
-	sound_channel* get_sound_channel(int priority) {
+	sound_channel* get_sound_channel(int priority, bool critical = false) {
 		sound_channel* r = nullptr;
 		for (auto& c : sound_channels) {
 			if (c.playing) {
@@ -673,10 +673,21 @@ struct ui_functions: ui_util_functions {
 				r = &c;
 			}
 		}
+		if (r || !critical) return r;
+		int critical_best_prio = std::numeric_limits<int>::max();
+		for (auto& c : sound_channels) {
+			if (c.flags & 0x20) continue;
+			if (!c.playing) return &c;
+			if (c.priority < critical_best_prio) {
+				critical_best_prio = c.priority;
+				r = &c;
+			}
+		}
+		if (r) r->playing = false;
 		return r;
 	}
 
-	void play_sound_internal(int id, xy position, const unit_t* source_unit, sound_mix_group mix_group, bool positional) {
+	void play_sound_internal(int id, xy position, const unit_t* source_unit, sound_mix_group mix_group, bool positional, bool critical = false) {
 		if (global_volume == 0 || group_volume(mix_group) == 0) return;
 		if (id <= 0 || (size_t)id >= has_loaded_sound.size()) return;
 		if (!has_loaded_sound[id]) {
@@ -749,7 +760,7 @@ struct ui_functions: ui_util_functions {
 				}
 			}
 
-			auto* c = get_sound_channel(sound_type->priority);
+			auto* c = get_sound_channel(sound_type->priority, critical);
 			if (c) {
 				native_sound::play(c - sound_channels.data(), &*s, (128 - 4) * (volume * group_volume(mix_group) / 100) * global_volume / 10000, pan);
 				if (mix_group == sound_mix_group_acknowledgement) {
@@ -781,6 +792,18 @@ struct ui_functions: ui_util_functions {
 		if (st.current_frame < replay_frame) return;
 		play_sound_internal(id, xy(), source_unit, sound_mix_group_acknowledgement, false);
 	}
+	void play_critical_acknowledgement_sound(int id, const unit_t* source_unit = nullptr) {
+		if (st.current_frame < replay_frame) return;
+		play_sound_internal(id, xy(), source_unit, sound_mix_group_acknowledgement, false, true);
+	}
+	void play_critical_acknowledgement_race_sound(int base_id, int owner, const unit_t* source_unit = nullptr) {
+		int race_offset = 0;
+		if (owner >= 0 && owner < 12) {
+			if (st.players[owner].race == race_t::terran) race_offset = 1;
+			else if (st.players[owner].race == race_t::protoss) race_offset = 2;
+		}
+		play_critical_acknowledgement_sound(base_id + race_offset, source_unit);
+	}
 
 	virtual void notify_player_under_attack(unit_t* target) override {
 		if (!target) return;
@@ -798,6 +821,7 @@ struct ui_functions: ui_util_functions {
 	virtual void notify_nuclear_launch_detected(int owner, const unit_t* source_unit = nullptr) override {
 		if (st.current_frame < replay_frame) return;
 		if (owner != primary_perspective_player_index) return;
+		play_critical_acknowledgement_race_sound(127, owner, source_unit);
 		++nuclear_launch_alert_count;
 	}
 

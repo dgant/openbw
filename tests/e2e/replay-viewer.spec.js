@@ -1556,7 +1556,7 @@ test("music playlist uses the first player's race only", async ({ page }) => {
   assertCleanLogs(logs);
 });
 
-test("music pauses when playback loses window focus and resumes when focus returns", async ({ page }) => {
+test("music stays in sync with frame advancement across focus changes", async ({ page }) => {
   const logs = await createLogCollectors(page, { disableAudio: false });
 
   await page.goto("/");
@@ -1587,13 +1587,12 @@ test("music pauses when playback loses window focus and resumes when focus retur
       }
     };
     reset_playback_state_monitor();
+    playbackStateMonitor.lastFrame = currentFrame - 1;
     note_viewer_frame_progress(currentFrame);
     sync_viewer_runtime_state();
     viewerWindowFocused = false;
-    reset_playback_state_monitor();
     sync_viewer_runtime_state();
     viewerWindowFocused = true;
-    reset_playback_state_monitor();
     sync_viewer_runtime_state();
     currentFrame = 101;
     note_viewer_frame_progress(currentFrame);
@@ -1605,10 +1604,59 @@ test("music pauses when playback loses window focus and resumes when focus retur
     };
   });
   expect(state).toEqual({
-    pauseCalls: 1,
-    playCalls: 1,
+    pauseCalls: 0,
+    playCalls: 0,
     paused: false
   });
+
+  assertCleanLogs(logs);
+});
+
+test("nuclear launch alert increments the matching acknowledgement sound when the alert text fires", async ({ page }) => {
+  test.setTimeout(180000);
+  const logs = await createLogCollectors(page, { disableAudio: false });
+
+  await page.addInitScript(() => {
+    localStorage.volumeSettings = JSON.stringify({ level: 1, muted: false });
+    localStorage.audioCategorySettings = JSON.stringify({
+      combat: { enabled: true, level: 1 },
+      acknowledgements: { enabled: true, level: 1 },
+      music: { enabled: false, level: 0.25 }
+    });
+  });
+
+  await loadReplay(page, nukeReplayPath);
+  await page.mouse.click(50, 50);
+  const expectedSoundId = await page.evaluate(() => {
+    const race = _player_get_value(players[Module.get_primary_perspective_player()], C_RACE);
+    return 127 + (race === 1 ? 1 : race === 2 ? 2 : 0);
+  });
+  await page.evaluate(() => {
+    _replay_set_value(0, 128);
+    _replay_set_value(1, 0);
+  });
+
+  let launchState = null;
+  await expect
+    .poll(
+      () =>
+        page.evaluate((id) => ({
+          state: {
+            alertCount: Module.get_nuclear_launch_alert_count(),
+            soundCount: Module.get_acknowledgement_sound_play_count(id),
+            lastAck: Module.get_last_acknowledgement_sound_id()
+          }
+        }), expectedSoundId).then((result) => {
+          launchState = result.state;
+          return launchState.alertCount > 0 && launchState.soundCount > 0 && launchState.lastAck === expectedSoundId;
+        }),
+      { timeout: 60000 }
+    )
+    .toBe(true);
+
+  expect(launchState.alertCount).toBeGreaterThan(0);
+  expect(launchState.soundCount).toBeGreaterThan(0);
+  expect(launchState.lastAck).toBe(expectedSoundId);
 
   assertCleanLogs(logs);
 });
@@ -2011,6 +2059,46 @@ test.fixme("late-game camera retains the current fight through brief attention d
   expect(summary.frame).toBeGreaterThanOrEqual(endFrame);
   expect(summary.viewportAttentionCount).toBe(0);
   expect(summary.retainViewportFight).toBe(true);
+
+  assertCleanLogs(logs);
+});
+
+test("late-game stale viewport hold does not block a much stronger offscreen fight", async ({ page }) => {
+  test.setTimeout(180000);
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, nukeReplayPath, "Hannes");
+  const frame = Math.round((32 * 60 + 9) * 1000 / 42);
+  await page.evaluate((targetFrame) => {
+    _replay_set_value(3, targetFrame);
+    _replay_set_value(0, 128);
+    _replay_set_value(1, 0);
+  }, frame);
+  await page.waitForFunction((targetFrame) => _replay_get_value(2) >= targetFrame, frame, { timeout: 120000 });
+
+  let summary = null;
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const summary = JSON.parse(Module.get_observer_debug_summary());
+          if (summary.frame < Math.round((32 * 60 + 9) * 1000 / 42)) return null;
+          if (summary.viewportAttentionCount !== 0) return null;
+          if (!(summary.bestOffscreen.attention && summary.bestOffscreen.score > summary.bestViewport.score)) return null;
+          return summary;
+        }).then((value) => {
+          summary = value;
+          return !!value && value.staleViewportFightHold === true && value.retainViewportFight === false;
+        }),
+      { timeout: 30000 }
+    )
+    .toBe(true);
+
+  expect(summary.viewportAttentionCount).toBe(0);
+  expect(summary.staleViewportFightHold).toBe(true);
+  expect(summary.bestOffscreen.attention).toBe(true);
+  expect(summary.bestOffscreen.score).toBeGreaterThan(summary.bestViewport.score);
+  expect(summary.retainViewportFight).toBe(false);
 
   assertCleanLogs(logs);
 });

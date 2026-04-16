@@ -6199,7 +6199,6 @@ struct state_functions {
 		} else if (u->order_state == 1) {
 			if (u->main_order_timer <= 45 || unit_is_at_move_target(u)) {
 				if (primary_perspective_player() >= 0) {
-					play_acknowledgement_race_sound(127, primary_perspective_player(), u);
 					notify_nuclear_launch_detected(primary_perspective_player(), u);
 				}
 				// todo: callback for message

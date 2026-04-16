@@ -196,15 +196,17 @@ inline void main_t::observer_v3_update_interest_queue(const a_vector<unit_t*>& e
 	observer_v3_interest_cursor = (observer_v3_interest_cursor + updates) % eligible_units.size();
 }
 
-inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& best_viewport_score, bool retain_viewport_fight) {
+inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& best_viewport_score, bool live_viewport_fight, bool stale_viewport_fight_hold) {
 	if (now < observer_v3_jump_cooldown_until) return 0;
 	unit_t* best_unit = nullptr;
 	double best_score = -1.0;
 	best_viewport_score = 0.0;
+	double best_offscreen_score = 0.0;
 	for (unit_t* unit : eligible_units) {
 		int unit_key = (int)ui.get_unit_id_32(unit).raw_value;
 		double score = observer_v3_effective_interest_score(unit);
 		if (observer_position_in_viewport(unit->sprite->position) && score > best_viewport_score) best_viewport_score = score;
+		if (!observer_position_in_viewport(unit->sprite->position) && score > best_offscreen_score) best_offscreen_score = score;
 		if (score > best_score) {
 			best_score = score;
 			best_unit = unit;
@@ -215,7 +217,8 @@ inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eli
 		direct_pan_target = best_unit->sprite->position;
 		return 1;
 	}
-	if (retain_viewport_fight) return 0;
+	if (live_viewport_fight) return 0;
+	if (stale_viewport_fight_hold && best_viewport_score >= best_offscreen_score) return 0;
 	observer_v3_apply_center(best_unit->sprite->position, true);
 	observer_v3_jump_cooldown_until = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
 		std::chrono::duration<double>(5.0 + std::min(5.0, best_viewport_score)));
@@ -254,8 +257,9 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 		if (viewport_attention_count != 0) {
 			observer_v3_viewport_fight_hold_until = now + std::chrono::milliseconds(6000);
 		}
-		bool retain_viewport_fight = viewport_attention_count != 0 || now < observer_v3_viewport_fight_hold_until;
-		int jump_action = observer_v3_try_jump_to_interest(eligible_units, now, direct_pan_target, best_viewport_score, retain_viewport_fight);
+		bool live_viewport_fight = viewport_attention_count != 0;
+		bool stale_viewport_fight_hold = !live_viewport_fight && now < observer_v3_viewport_fight_hold_until;
+		int jump_action = observer_v3_try_jump_to_interest(eligible_units, now, direct_pan_target, best_viewport_score, live_viewport_fight, stale_viewport_fight_hold);
 		if (jump_action == 1) {
 			observer_focus_position = direct_pan_target;
 			double dx = (double)direct_pan_target.x - observer_v3_camera_x;
@@ -280,7 +284,7 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 			for (unit_t* unit : eligible_units) {
 				if (!unit || !unit->sprite) continue;
 				double score = observer_v3_effective_interest_score(unit);
-				if (retain_viewport_fight && !observer_position_in_viewport(unit->sprite->position)) continue;
+				if (live_viewport_fight && !observer_position_in_viewport(unit->sprite->position)) continue;
 				double dx = (double)unit->sprite->position.x - camera_center.x;
 				double dy = (double)unit->sprite->position.y - camera_center.y;
 				if (std::abs(dx) > half_view_width || std::abs(dy) > half_view_height) continue;
