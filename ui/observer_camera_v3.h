@@ -308,6 +308,10 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 	observer_v3_last_update_frame = ui.st.current_frame;
 	observer_v3_last_action = 0;
 	observer_v3_last_target_position = observer_current_camera_position;
+	double max_pan_accel = 64.0;
+	double brake_accel = 4.0 * 24.0;
+	double full_pull_for_max_accel = 128.0;
+	double max_velocity = 9.6 * (1000.0 / 42.0) * std::max(1.0 / 128.0, ui.game_speed.raw_value / 256.0);
 
 	a_vector<unit_t*> eligible_units;
 	observer_v3_collect_eligible_units(ptr(ui.st.visible_units), eligible_units);
@@ -333,6 +337,14 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 			double scale = velocity_length == 0.0 ? 0.0 : next_length / velocity_length;
 			observer_v3_velocity_x *= scale;
 			observer_v3_velocity_y *= scale;
+		};
+		auto clamp_velocity = [&](double& velocity_x, double& velocity_y) {
+			double velocity_length = std::sqrt(velocity_x * velocity_x + velocity_y * velocity_y);
+			if (velocity_length > max_velocity && velocity_length > 0.0) {
+				double scale = max_velocity / velocity_length;
+				velocity_x *= scale;
+				velocity_y *= scale;
+			}
 		};
 		auto should_refuse_pan_target = [&](xy target) {
 			for (unit_t* unit : eligible_units) {
@@ -373,19 +385,24 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 				double dy = (double)direct_pan_target.y - observer_v3_camera_y;
 				double length = std::sqrt(dx * dx + dy * dy);
 				if (length > 0.0) {
-					double accel = 64.0 * dt;
+					double accel = max_pan_accel * dt;
 					observer_v3_velocity_x += (dx / length) * accel;
 					observer_v3_velocity_y += (dy / length) * accel;
 				}
 			}
 		} else if (jump_action == 0) {
-			double weight_sum = 0.0;
-			double weighted_x = 0.0;
-			double weighted_y = 0.0;
+			double focus_weight_sum = 0.0;
+			double focus_weighted_x = 0.0;
+			double focus_weighted_y = 0.0;
+			double pull_sum_x = 0.0;
+			double pull_sum_y = 0.0;
 			xy camera_center = xy((int)std::lround(observer_v3_camera_x), (int)std::lround(observer_v3_camera_y));
-			double half_view_width = (double)ui.view_width;
-			double half_view_height = (double)ui.view_height;
-			double max_velocity = 9.6 * (1000.0 / 42.0) * std::max(1.0 / 128.0, ui.game_speed.raw_value / 256.0);
+			double max_pull_x = (double)ui.view_width;
+			double max_pull_y = (double)ui.view_height;
+			double hysteresis_x = (double)ui.view_width / 6.0;
+			double hysteresis_y = (double)ui.view_height / 6.0;
+			double pull_band_x = std::max(1.0, max_pull_x - hysteresis_x);
+			double pull_band_y = std::max(1.0, max_pull_y - hysteresis_y);
 			double remaining_jump_cooldown = std::max(
 				0.0,
 				std::chrono::duration_cast<std::chrono::duration<double>>(observer_v3_jump_cooldown_until - now).count());
@@ -404,6 +421,10 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 			if (!live_viewport_fight && best_offscreen_high_interest_score > 100.0 && best_offscreen_high_interest_score > best_viewport_score) {
 				use_high_interest_only = true;
 			}
+			auto pull_band_weight = [&](double normalized_distance) {
+				if (normalized_distance <= 0.0 || normalized_distance >= 1.0) return 0.0;
+				return 4.0 * normalized_distance * (1.0 - normalized_distance);
+			};
 			for (unit_t* unit : eligible_units) {
 				if (!unit || !unit->sprite) continue;
 				double score = observer_v3_effective_interest_score(unit);
@@ -412,12 +433,14 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 				if (use_high_interest_only && score <= 100.0) continue;
 				double dx = (double)unit->sprite->position.x - camera_center.x;
 				double dy = (double)unit->sprite->position.y - camera_center.y;
-				if (std::abs(dx) > half_view_width || std::abs(dy) > half_view_height) continue;
-				double distance_from_hysteresis_x = std::max(0.0, std::abs(dx) - (double)ui.view_width / 6.0);
-				double distance_from_hysteresis_y = std::max(0.0, std::abs(dy) - (double)ui.view_height / 6.0);
-				double distance_sq =
-					distance_from_hysteresis_x * distance_from_hysteresis_x +
-					distance_from_hysteresis_y * distance_from_hysteresis_y;
+				if (std::abs(dx) > max_pull_x || std::abs(dy) > max_pull_y) continue;
+				double distance_from_hysteresis_x = std::max(0.0, std::abs(dx) - hysteresis_x);
+				double distance_from_hysteresis_y = std::max(0.0, std::abs(dy) - hysteresis_y);
+				double normalized_pull_distance = std::max(
+					distance_from_hysteresis_x / pull_band_x,
+					distance_from_hysteresis_y / pull_band_y);
+				double band_weight = pull_band_weight(normalized_pull_distance);
+				if (band_weight <= 0.0) continue;
 				double dx_bounds = 0.0;
 				if (unit->sprite->position.x < ui.screen_pos.x) dx_bounds = (double)ui.screen_pos.x - unit->sprite->position.x;
 				else if (unit->sprite->position.x > ui.screen_pos.x + (int)ui.view_width) dx_bounds = unit->sprite->position.x - (ui.screen_pos.x + (int)ui.view_width);
@@ -432,37 +455,62 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 					if (zero_weight_time <= 0.0 || time_to_viewport >= zero_weight_time) continue;
 					offscreen_fade = zero_weight_time > 0.0 ? (zero_weight_time - time_to_viewport) / zero_weight_time : 0.0;
 				}
-				double weight = score * distance_sq * offscreen_fade;
-				if (weight <= 0.0) continue;
-				weight_sum += weight;
-				weighted_x += weight * unit->sprite->position.x;
-				weighted_y += weight * unit->sprite->position.y;
+				double unit_pull = score * band_weight * offscreen_fade;
+				if (unit_pull <= 0.0) continue;
+				double distance = std::sqrt(dx * dx + dy * dy);
+				if (distance <= 0.0) continue;
+				pull_sum_x += (dx / distance) * unit_pull;
+				pull_sum_y += (dy / distance) * unit_pull;
+				focus_weight_sum += unit_pull;
+				focus_weighted_x += unit_pull * unit->sprite->position.x;
+				focus_weighted_y += unit_pull * unit->sprite->position.y;
 			}
-			if (weight_sum > 0.0 || use_high_interest_only) {
-				xy target = weight_sum > 0.0
-					? xy((int)std::lround(weighted_x / weight_sum), (int)std::lround(weighted_y / weight_sum))
-					: best_offscreen_high_interest_target;
-				if (should_refuse_pan_target(target)) {
-					observer_v3_last_target_position = observer_current_camera_position;
-					decelerate_velocity();
-				} else {
-					observer_focus_position = target;
-					if (observer_position_in_middle_third(target)) {
-						observer_v3_last_target_position = target;
-						decelerate_velocity();
-					} else {
-						observer_v3_last_action = 3;
-						observer_v3_last_target_position = target;
-						double dx = (double)target.x - observer_v3_camera_x;
-						double dy = (double)target.y - observer_v3_camera_y;
-						double length = std::sqrt(dx * dx + dy * dy);
-						if (length > 0.0) {
-							double accel = 64.0 * dt;
-							observer_v3_velocity_x += (dx / length) * accel;
-							observer_v3_velocity_y += (dy / length) * accel;
-						}
-					}
+			double pull_length = std::sqrt(pull_sum_x * pull_sum_x + pull_sum_y * pull_sum_y);
+			double accel_scale = std::min(1.0, pull_length / full_pull_for_max_accel);
+			xy focus_target = focus_weight_sum > 0.0
+				? xy((int)std::lround(focus_weighted_x / focus_weight_sum), (int)std::lround(focus_weighted_y / focus_weight_sum))
+				: best_offscreen_high_interest_target;
+			double accel_x = 0.0;
+			double accel_y = 0.0;
+			if (pull_length > 0.0 && accel_scale > 0.0) {
+				accel_x = (pull_sum_x / pull_length) * (max_pan_accel * accel_scale);
+				accel_y = (pull_sum_y / pull_length) * (max_pan_accel * accel_scale);
+			}
+			double velocity_length = std::sqrt(observer_v3_velocity_x * observer_v3_velocity_x + observer_v3_velocity_y * observer_v3_velocity_y);
+			if (velocity_length > 0.0) {
+				double braking_scale = std::max(0.0, 1.0 - accel_scale);
+				accel_x += -(observer_v3_velocity_x / velocity_length) * (brake_accel * braking_scale);
+				accel_y += -(observer_v3_velocity_y / velocity_length) * (brake_accel * braking_scale);
+			}
+			double candidate_velocity_x = observer_v3_velocity_x + accel_x * dt;
+			double candidate_velocity_y = observer_v3_velocity_y + accel_y * dt;
+			clamp_velocity(candidate_velocity_x, candidate_velocity_y);
+			xy candidate_target = observer_v3_clamp_target_center(xy(
+				(int)std::lround(observer_v3_camera_x + candidate_velocity_x * dt),
+				(int)std::lround(observer_v3_camera_y + candidate_velocity_y * dt)));
+			if (pull_length > 0.0 && should_refuse_pan_target(candidate_target)) {
+				observer_v3_last_target_position = observer_current_camera_position;
+				double brake_only_velocity_x = observer_v3_velocity_x;
+				double brake_only_velocity_y = observer_v3_velocity_y;
+				double brake_only_velocity_length = std::sqrt(brake_only_velocity_x * brake_only_velocity_x + brake_only_velocity_y * brake_only_velocity_y);
+				if (brake_only_velocity_length > 0.0) {
+					double brake_only_accel_x = -(brake_only_velocity_x / brake_only_velocity_length) * brake_accel;
+					double brake_only_accel_y = -(brake_only_velocity_y / brake_only_velocity_length) * brake_accel;
+					brake_only_velocity_x += brake_only_accel_x * dt;
+					brake_only_velocity_y += brake_only_accel_y * dt;
+					if (brake_only_velocity_x * observer_v3_velocity_x < 0.0) brake_only_velocity_x = 0.0;
+					if (brake_only_velocity_y * observer_v3_velocity_y < 0.0) brake_only_velocity_y = 0.0;
 				}
+				observer_v3_velocity_x = brake_only_velocity_x;
+				observer_v3_velocity_y = brake_only_velocity_y;
+			} else {
+				if (pull_length > 0.0) {
+					observer_v3_last_action = 3;
+					observer_v3_last_target_position = focus_target;
+					observer_focus_position = focus_target;
+				}
+				observer_v3_velocity_x = candidate_velocity_x;
+				observer_v3_velocity_y = candidate_velocity_y;
 			}
 		} else if (jump_action == 2) {
 			observer_v3_last_action = 2;
@@ -471,7 +519,6 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 	}
 
 	double velocity_length = std::sqrt(observer_v3_velocity_x * observer_v3_velocity_x + observer_v3_velocity_y * observer_v3_velocity_y);
-	double max_velocity = 9.6 * (1000.0 / 42.0) * std::max(1.0 / 128.0, ui.game_speed.raw_value / 256.0);
 	if (velocity_length > max_velocity && velocity_length > 0.0) {
 		double scale = max_velocity / velocity_length;
 		observer_v3_velocity_x *= scale;
