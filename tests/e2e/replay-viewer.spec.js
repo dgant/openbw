@@ -218,6 +218,61 @@ test("observer camera engages promptly on replay startup instead of sitting in m
   assertAllCleanLogs(logs);
 });
 
+test("normal playback presents each game frame while the requested speed stays within the display budget", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+  await page.waitForTimeout(500);
+  const start = await page.evaluate(() => ({
+    frame: _replay_get_value(2),
+    presents: window._ui_get_present_count()
+  }));
+  await page.evaluate(() => {
+    _replay_set_value(0, 2);
+    _replay_set_value(1, 0);
+  });
+  await page.waitForTimeout(2000);
+  const end = await page.evaluate(() => ({
+    frame: _replay_get_value(2),
+    presents: window._ui_get_present_count()
+  }));
+
+  const frameDelta = end.frame - start.frame;
+  const presentDelta = end.presents - start.presents;
+  expect(frameDelta).toBeGreaterThan(70);
+  expect(presentDelta).toBeGreaterThanOrEqual(frameDelta - 2);
+  assertAllCleanLogs(logs);
+});
+
+test("fast-forward catch-up advances many sim frames while capping visual presents near 24 fps", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, nukeReplayPath);
+  await page.waitForTimeout(500);
+  const start = await page.evaluate(() => ({
+    frame: _replay_get_value(2),
+    presents: window._ui_get_present_count()
+  }));
+  await page.evaluate(() => {
+    _replay_set_value(3, Math.min(_replay_get_value(4), _replay_get_value(2) + 8000));
+    _replay_set_value(1, 0);
+  });
+  await page.waitForTimeout(2000);
+  const end = await page.evaluate(() => ({
+    frame: _replay_get_value(2),
+    target: _replay_get_value(3),
+    presents: window._ui_get_present_count()
+  }));
+
+  const frameDelta = end.frame - start.frame;
+  const presentDelta = end.presents - start.presents;
+  expect(end.target).toBeGreaterThan(start.frame);
+  expect(frameDelta).toBeGreaterThan(500);
+  expect(presentDelta).toBeLessThanOrEqual(55);
+  expect(frameDelta).toBeGreaterThan(presentDelta * 4);
+  assertAllCleanLogs(logs);
+});
+
 test("rep query boot keeps the homepage controls hidden until the viewer chooses a loading state", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
@@ -444,7 +499,9 @@ test("remote BASIL replay advances through the reported 21:18 local stall point"
   expect(requestedState.overlay).toContain("Fast-forwarding to");
 
   const startFrame = requestedState.cur;
-  await page.waitForTimeout(3000);
+  await expect
+    .poll(() => page.evaluate(() => _replay_get_value(2)), { timeout: 10000 })
+    .toBeGreaterThan(startFrame);
   const endState = await page.evaluate(() => ({
     cur: _replay_get_value(2),
     target: _replay_get_value(3),

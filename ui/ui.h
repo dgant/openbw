@@ -1850,12 +1850,25 @@ struct ui_functions: ui_util_functions {
 	std::chrono::high_resolution_clock::time_point last_draw;
 	std::chrono::high_resolution_clock::time_point last_input_poll;
 	std::chrono::high_resolution_clock::time_point last_fps;
+	std::chrono::high_resolution_clock::time_point last_present_time = std::chrono::high_resolution_clock::time_point::min();
+	std::chrono::high_resolution_clock::duration present_min_interval = std::chrono::high_resolution_clock::duration::zero();
 	int fps_counter = 0;
+	uint64_t present_count = 0;
+	int last_presented_frame = -1;
 	size_t scroll_speed_n = 0;
 	bool force_redraw = true;
 
 	void request_redraw() {
 		force_redraw = true;
+	}
+
+	void set_present_cap_fps(double fps) {
+		if (fps <= 0.0) {
+			present_min_interval = std::chrono::high_resolution_clock::duration::zero();
+			return;
+		}
+		present_min_interval = std::chrono::duration_cast<std::chrono::high_resolution_clock::duration>(
+			std::chrono::duration<double>(1.0 / fps));
 	}
 
 	void resize(int width, int height) {
@@ -2202,7 +2215,11 @@ struct ui_functions: ui_util_functions {
 		if (screen_pos != previous_screen_pos) redraw_requested = true;
 
 		bool playback_static = (is_paused || is_done()) && st.current_frame == replay_frame;
-		if (playback_static && !redraw_requested) return;
+		bool frame_unchanged_since_present = st.current_frame == last_presented_frame;
+		bool present_throttled = present_min_interval != std::chrono::high_resolution_clock::duration::zero() &&
+			last_present_time != std::chrono::high_resolution_clock::time_point::min() &&
+			now - last_present_time < present_min_interval;
+		if (!redraw_requested && (playback_static || frame_unchanged_since_present || present_throttled)) return;
 
 		uint8_t* data = (uint8_t*)indexed_surface->lock();
 		draw_tiles(data, indexed_surface->pitch);
@@ -2239,6 +2256,9 @@ struct ui_functions: ui_util_functions {
 			rgba_surface->blit(&*window_surface, 0, 0);
 			wnd.update_surface();
 		}
+		last_present_time = now;
+		last_presented_frame = st.current_frame;
+		++present_count;
 	}
 
 	std::tuple<int, int, uint32_t*> get_rgba_buffer() {
@@ -2306,6 +2326,10 @@ struct ui_functions: ui_util_functions {
 	void reset() {
 		apm = {};
 		replay_frame = 0;
+		last_present_time = std::chrono::high_resolution_clock::time_point::min();
+		present_min_interval = std::chrono::high_resolution_clock::duration::zero();
+		present_count = 0;
+		last_presented_frame = -1;
 		auto& game = *st.game;
 		st = state();
 		game = game_state();

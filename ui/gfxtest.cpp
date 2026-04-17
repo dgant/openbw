@@ -101,6 +101,8 @@ struct main_t {
 
 	std::chrono::high_resolution_clock clock;
 	std::chrono::high_resolution_clock::time_point last_tick;
+	bool playback_clock_initialized = false;
+	std::chrono::duration<double> playback_step_accumulator = std::chrono::duration<double>::zero();
 
 	std::chrono::high_resolution_clock::time_point last_fps;
 	int fps_counter = 0;
@@ -110,6 +112,8 @@ struct main_t {
 	void reset() {
 		saved_states.clear();
 		ui.reset();
+		playback_clock_initialized = false;
+		playback_step_accumulator = std::chrono::duration<double>::zero();
 		auto_observer_enabled = true;
 		fog_of_war_enabled = true;
 		fog_of_war_player_mask = 0;
@@ -324,9 +328,10 @@ struct main_t {
 
 	void update() {
 		auto now = clock.now();
-		constexpr auto max_main_loop_work_time = std::chrono::microseconds(1000000 / 144);
-
-		auto tick_speed = std::chrono::milliseconds((fp8::integer(42) / ui.game_speed).integer_part());
+		const auto max_main_loop_work_time = std::chrono::duration_cast<std::chrono::high_resolution_clock::duration>(
+			std::chrono::duration<double>(1.0 / 144.0));
+		double playback_speed = std::max(1.0 / 128.0, ui.game_speed.raw_value / 256.0);
+		auto replay_frame_interval = std::chrono::duration<double>(0.042 / playback_speed);
 
 		if (now - last_fps >= std::chrono::seconds(1)) {
 			//log("game fps: %g\n", fps_counter / std::chrono::duration_cast<std::chrono::duration<double, std::ratio<1, 1>>>(now - last_fps).count());
@@ -360,11 +365,18 @@ struct main_t {
 			for (auto& v : ui.apm) v.update(ui.st.current_frame);
 		};
 
+		bool visual_fast_forward = ui.st.current_frame != ui.replay_frame;
+		ui.set_present_cap_fps(visual_fast_forward ? 24.0 : 144.0);
+
 		if (!ui.is_done() || ui.st.current_frame != ui.replay_frame) {
 			if (ui.st.current_frame != ui.replay_frame) {
-				if (ui.st.current_frame != ui.replay_frame) {
+				playback_clock_initialized = false;
+				playback_step_accumulator = std::chrono::duration<double>::zero();
+				if (!saved_states.empty()) {
 					auto i = saved_states.lower_bound(ui.replay_frame);
-					if (i != saved_states.begin()) --i;
+					if (i == saved_states.end() || i->first > ui.replay_frame) {
+						if (i != saved_states.begin()) --i;
+					}
 					auto& v = i->second;
 					if (ui.st.current_frame > ui.replay_frame || v->st.current_frame > ui.st.current_frame) {
 						ui.st = copy_state(v->st);
@@ -383,21 +395,27 @@ struct main_t {
 				last_tick = now;
 			} else {
 				if (ui.is_paused) {
+					playback_clock_initialized = false;
+					playback_step_accumulator = std::chrono::duration<double>::zero();
 					last_tick = now;
 				} else {
-					auto tick_t = now - last_tick;
-					if (tick_t >= tick_speed * 16) {
-						last_tick = now - tick_speed * 16;
-						tick_t = tick_speed * 16;
+					if (!playback_clock_initialized) {
+						last_tick = now;
+						playback_clock_initialized = true;
 					}
-					auto tick_n = tick_speed.count() == 0 ? 128 : tick_t / tick_speed;
-					for (auto i = tick_n; i;) {
-						--i;
+					auto elapsed = now - last_tick;
+					last_tick = now;
+					auto max_elapsed = std::chrono::duration_cast<std::chrono::high_resolution_clock::duration>(replay_frame_interval * 16.0);
+					if (elapsed > max_elapsed) elapsed = max_elapsed;
+					if (elapsed < std::chrono::high_resolution_clock::duration::zero()) {
+						elapsed = std::chrono::high_resolution_clock::duration::zero();
+					}
+					playback_step_accumulator += std::chrono::duration_cast<std::chrono::duration<double>>(elapsed);
+					for (size_t i = 0; playback_step_accumulator >= replay_frame_interval && i != 128; ++i) {
 						++fps_counter;
-						last_tick += tick_speed;
-
 						if (!ui.is_done()) next();
 						else break;
+						playback_step_accumulator -= replay_frame_interval;
 						if (i % 4 == 3 && clock.now() - now >= max_main_loop_work_time) break;
 					}
 					ui.replay_frame = ui.st.current_frame;
@@ -626,6 +644,11 @@ extern "C" void ui_set_screen_center_manual(int x, int y) {
 	if (!m) return;
 	ui_set_screen_center(x, y);
 	m->pause_observer_for_manual_camera();
+}
+
+extern "C" double ui_get_present_count() {
+	if (!m) return 0.0;
+	return (double)m->ui.present_count;
 }
 
 extern "C" double replay_get_value(int index) {
