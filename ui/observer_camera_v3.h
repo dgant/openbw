@@ -413,7 +413,11 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 				double dx = (double)unit->sprite->position.x - camera_center.x;
 				double dy = (double)unit->sprite->position.y - camera_center.y;
 				if (std::abs(dx) > half_view_width || std::abs(dy) > half_view_height) continue;
-				double distance_sq = dx * dx + dy * dy;
+				double distance_from_hysteresis_x = std::max(0.0, std::abs(dx) - (double)ui.view_width / 6.0);
+				double distance_from_hysteresis_y = std::max(0.0, std::abs(dy) - (double)ui.view_height / 6.0);
+				double distance_sq =
+					distance_from_hysteresis_x * distance_from_hysteresis_x +
+					distance_from_hysteresis_y * distance_from_hysteresis_y;
 				double dx_bounds = 0.0;
 				if (unit->sprite->position.x < ui.screen_pos.x) dx_bounds = (double)ui.screen_pos.x - unit->sprite->position.x;
 				else if (unit->sprite->position.x > ui.screen_pos.x + (int)ui.view_width) dx_bounds = unit->sprite->position.x - (ui.screen_pos.x + (int)ui.view_width);

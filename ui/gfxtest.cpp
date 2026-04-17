@@ -324,6 +324,7 @@ struct main_t {
 
 	void update() {
 		auto now = clock.now();
+		constexpr auto max_main_loop_work_time = std::chrono::microseconds(1000000 / 144);
 
 		auto tick_speed = std::chrono::milliseconds((fp8::integer(42) / ui.game_speed).integer_part());
 
@@ -376,7 +377,7 @@ struct main_t {
 						for (size_t i2 = 0; i2 != 4 && ui.st.current_frame != ui.replay_frame; ++i2) {
 							next();
 						}
-						if (clock.now() - now >= std::chrono::milliseconds(50)) break;
+						if (clock.now() - now >= max_main_loop_work_time) break;
 					}
 				}
 				last_tick = now;
@@ -397,7 +398,7 @@ struct main_t {
 
 						if (!ui.is_done()) next();
 						else break;
-						if (i % 4 == 3 && clock.now() - now >= std::chrono::milliseconds(50)) break;
+						if (i % 4 == 3 && clock.now() - now >= max_main_loop_work_time) break;
 					}
 					ui.replay_frame = ui.st.current_frame;
 				}
@@ -416,9 +417,8 @@ struct main_t {
 			ui.st.players.at(forced_first_player).color = 0;
 			ui.st.players.at(forced_second_player).color = 1;
 		}
-		auto previous_screen_pos = ui.screen_pos;
 		ui.update();
-		if (ui.screen_pos != previous_screen_pos) pause_observer_for_manual_camera();
+		if (ui.manual_camera_moved_this_frame) pause_observer_for_manual_camera();
 		if (force_player_colors) {
 			ui.st.players.at(forced_first_player).color = forced_first_color;
 			ui.st.players.at(forced_second_player).color = forced_second_color;

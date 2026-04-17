@@ -199,6 +199,25 @@ test("remote replay loaded via rep query keeps advancing after startup", async (
   assertAllCleanLogs(logs);
 });
 
+test("observer camera engages promptly on replay startup instead of sitting in manual override", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const summary = JSON.parse(Module.get_observer_debug_summary());
+          return !summary.manualOverrideActive &&
+            (summary.screenPosX !== 0 || summary.screenPosY !== 0);
+        }),
+      { timeout: 2000 }
+    )
+    .toBe(true);
+
+  assertAllCleanLogs(logs);
+});
+
 test("rep query boot keeps the homepage controls hidden until the viewer chooses a loading state", async ({ page }) => {
   const logs = await createLogCollectors(page);
 

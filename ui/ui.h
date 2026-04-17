@@ -1915,6 +1915,7 @@ struct ui_functions: ui_util_functions {
 	bool is_paused = false;
 	bool is_drag_selecting = false;
 	bool is_dragging_screen = false;
+	bool manual_camera_moved_this_frame = false;
 	int drag_select_from_x = 0;
 	int drag_select_from_y = 0;
 	int drag_select_to_x = 0;
@@ -1925,6 +1926,7 @@ struct ui_functions: ui_util_functions {
 		auto now = clock.now();
 		bool redraw_requested = force_redraw;
 		force_redraw = false;
+		manual_camera_moved_this_frame = false;
 
 		if (now - last_fps >= std::chrono::seconds(1)) {
 			//ui::log("draw fps: %g\n", fps_counter / std::chrono::duration_cast<std::chrono::duration<double, std::ratio<1, 1>>>(now - last_fps).count());
@@ -1951,8 +1953,10 @@ struct ui_functions: ui_util_functions {
 		auto check_move_minimap = [&](auto& e) {
 			if (e.mouse_x >= minimap_area.from.x && e.mouse_x < minimap_area.to.x) {
 				if (e.mouse_y >= minimap_area.from.y && e.mouse_y < minimap_area.to.y) {
+					auto previous_screen_pos = screen_pos;
 					is_moving_minimap = true;
 					move_minimap(e.mouse_x, e.mouse_y);
+					if (screen_pos != previous_screen_pos) manual_camera_moved_this_frame = true;
 				}
 			}
 		};
@@ -2069,8 +2073,10 @@ struct ui_functions: ui_util_functions {
 						}
 					} else if (e.button_state & 4) {
 						if (is_dragging_screen) {
+							auto previous_screen_pos = screen_pos;
 							screen_pos = drag_screen_pos - xy((fp16::integer(e.mouse_x) / view_scale).integer_part(), (fp16::integer(e.mouse_y) / view_scale).integer_part());
 							//screen_pos -= xy((fp16::integer(e.mouse_x - drag_screen_x) / view_scale).integer_part(), (fp16::integer(e.mouse_y - drag_screen_y) / view_scale).integer_part());
+							if (screen_pos != previous_screen_pos) manual_camera_moved_this_frame = true;
 						}
 					}
 
@@ -2155,6 +2161,7 @@ struct ui_functions: ui_util_functions {
 					else if (wnd.get_key_state(80)) screen_pos.x -= scroll_speed;
 					if (screen_pos != prev_screen_pos) {
 						redraw_requested = true;
+						manual_camera_moved_this_frame = true;
 						if (scroll_speed_n != scroll_speeds.size() - 1) ++scroll_speed_n;
 					} else scroll_speed_n = 0;
 				}
@@ -2169,7 +2176,10 @@ struct ui_functions: ui_util_functions {
 				if (x != -1) {
 					auto prev_screen_pos = screen_pos;
 					move_minimap(x, y);
-					if (screen_pos != prev_screen_pos) redraw_requested = true;
+					if (screen_pos != prev_screen_pos) {
+						redraw_requested = true;
+						manual_camera_moved_this_frame = true;
+					}
 				}
 			}
 			if (is_moving_replay_slider) {
