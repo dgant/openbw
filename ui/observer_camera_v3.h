@@ -243,6 +243,64 @@ inline void main_t::observer_v3_update_interest_queue(const a_vector<unit_t*>& e
 	observer_v3_interest_cursor = (observer_v3_interest_cursor + updates) % eligible_units.size();
 }
 
+inline bool main_t::observer_v3_focus_startup_interest() {
+	a_vector<unit_t*> eligible_units;
+	observer_v3_collect_eligible_units(ptr(ui.st.visible_units), eligible_units);
+	if (eligible_units.empty()) return false;
+
+	xy startup_target{};
+	int startup_owner = -1;
+	for (int owner = 0; owner != 12; ++owner) {
+		if (!observer_has_start_location(owner)) continue;
+		startup_owner = owner;
+		startup_target = observer_player_start_location(owner);
+		break;
+	}
+	if (startup_owner != -1) {
+		unit_t* nearest_owned_unit = nullptr;
+		double nearest_owned_unit_distance = std::numeric_limits<double>::max();
+		for (unit_t* unit : eligible_units) {
+			if (!unit || !unit->sprite || unit->owner != startup_owner) continue;
+			double distance = observer_distance_sq(unit->sprite->position, startup_target);
+			if (distance < nearest_owned_unit_distance) {
+				nearest_owned_unit_distance = distance;
+				nearest_owned_unit = unit;
+			}
+		}
+		if (nearest_owned_unit && nearest_owned_unit->sprite) {
+			startup_target = nearest_owned_unit->sprite->position;
+		}
+	}
+	if (startup_target == xy()) {
+		unit_t* best_unit = nullptr;
+		double best_score = -1.0;
+		int best_cluster_count = -1;
+		for (unit_t* unit : eligible_units) {
+			if (!unit || !unit->sprite) continue;
+			double score = observer_v3_compute_interest(unit);
+			bool has_combat_interest = observer_v3_unit_has_combat_interest(unit);
+			int cluster_count = has_combat_interest ? observer_v3_combat_cluster_count(unit, eligible_units) : 0;
+			if (
+				score > best_score ||
+				(score == best_score && has_combat_interest && cluster_count > best_cluster_count)
+			) {
+				best_score = score;
+				best_unit = unit;
+				best_cluster_count = cluster_count;
+			}
+		}
+		if (!best_unit || !best_unit->sprite) return false;
+		startup_target = best_unit->sprite->position;
+	}
+
+	observer_v3_startup_focus_pending = false;
+	observer_v3_last_action = 2;
+	observer_v3_last_target_position = startup_target;
+	observer_v3_last_apply_center_reason = 7;
+	observer_v3_apply_center(startup_target, true);
+	return true;
+}
+
 inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& direct_pan_score, double& best_viewport_score, bool live_viewport_fight, bool stale_viewport_fight_hold) {
 	if (now < observer_v3_jump_cooldown_until) return 0;
 	unit_t* best_unit = nullptr;
@@ -562,6 +620,11 @@ inline void main_t::update_observer_camera_v3(std::chrono::steady_clock::time_po
 		observer_v3_camera_y = (double)observer_current_camera_position.y;
 	}
 	if (observer_v3_focus_nukes(now)) {
+		observer_v3_last_update_frame = ui.st.current_frame;
+		return;
+	}
+	if (observer_v3_startup_focus_pending && observer_v3_focus_startup_interest()) {
+		observer_v3_jump_cooldown_until = now + std::chrono::seconds(2);
 		observer_v3_last_update_frame = ui.st.current_frame;
 		return;
 	}

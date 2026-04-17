@@ -209,6 +209,7 @@ test("observer camera engages promptly on replay startup instead of sitting in m
         page.evaluate(() => {
           const summary = JSON.parse(Module.get_observer_debug_summary());
           return !summary.manualOverrideActive &&
+            summary.actualApplyCenterReason === 7 &&
             (summary.screenPosX !== 0 || summary.screenPosY !== 0);
         }),
       { timeout: 2000 }

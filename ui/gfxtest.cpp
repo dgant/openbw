@@ -76,6 +76,7 @@ struct main_t {
 	std::chrono::steady_clock::time_point observer_v3_nuke_hold_until = std::chrono::steady_clock::time_point::min();
 	std::chrono::steady_clock::time_point observer_v3_viewport_fight_hold_until = std::chrono::steady_clock::time_point::min();
 	int observer_v3_last_update_frame = -1;
+	bool observer_v3_startup_focus_pending = true;
 	xy observer_v3_nuke_hold_position;
 	double observer_v3_camera_x = 0.0;
 	double observer_v3_camera_y = 0.0;
@@ -133,6 +134,7 @@ struct main_t {
 		observer_v3_nuke_hold_until = std::chrono::steady_clock::time_point::min();
 		observer_v3_viewport_fight_hold_until = std::chrono::steady_clock::time_point::min();
 		observer_v3_last_update_frame = -1;
+		observer_v3_startup_focus_pending = true;
 		observer_v3_nuke_hold_position = {};
 		observer_v3_camera_x = 0.0;
 		observer_v3_camera_y = 0.0;
@@ -248,6 +250,7 @@ struct main_t {
 	template <typename T>
 	void observer_v3_collect_eligible_units(T&& list, a_vector<unit_t*>& out);
 	void observer_v3_update_interest_queue(const a_vector<unit_t*>& eligible_units, int frame_delta);
+	bool observer_v3_focus_startup_interest();
 	int observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& direct_pan_score, double& best_viewport_score, bool live_viewport_fight, bool stale_viewport_fight_hold);
 	void observer_v3_update_motion(std::chrono::steady_clock::time_point now);
 	void update_observer_camera_v3(std::chrono::steady_clock::time_point now);
