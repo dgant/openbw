@@ -502,12 +502,18 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 				}
 				if (arrival_braking_scale > braking_scale) braking_scale = arrival_braking_scale;
 			}
-			if (velocity_length > 0.0 && braking_scale > 0.0) {
-				accel_x += -(observer_v3_velocity_x / velocity_length) * (brake_accel * braking_scale);
-				accel_y += -(observer_v3_velocity_y / velocity_length) * (brake_accel * braking_scale);
-			}
 			double candidate_velocity_x = observer_v3_velocity_x + accel_x * dt;
 			double candidate_velocity_y = observer_v3_velocity_y + accel_y * dt;
+			if (braking_scale > 0.0) {
+				double candidate_velocity_length = std::sqrt(candidate_velocity_x * candidate_velocity_x + candidate_velocity_y * candidate_velocity_y);
+				if (candidate_velocity_length > 0.0) {
+					double brake_amount = brake_accel * braking_scale * dt;
+					double next_length = std::max(0.0, candidate_velocity_length - brake_amount);
+					double scale = next_length / candidate_velocity_length;
+					candidate_velocity_x *= scale;
+					candidate_velocity_y *= scale;
+				}
+			}
 			clamp_velocity(candidate_velocity_x, candidate_velocity_y);
 			xy candidate_target = observer_v3_clamp_target_center(xy(
 				(int)std::lround(observer_v3_camera_x + candidate_velocity_x * dt),
