@@ -250,7 +250,7 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 	int frame_delta = observer_v3_last_update_frame == -1 ? 1 : ui.st.current_frame - observer_v3_last_update_frame;
 	if (frame_delta < 1) frame_delta = 1;
 	if (dt < 0.0) dt = 0.0;
-	if (dt > 2.0) dt = 2.0;
+	if (dt > 0.25) dt = 0.25;
 	observer_v3_last_update_frame = ui.st.current_frame;
 	observer_v3_last_action = 0;
 	observer_v3_last_target_position = observer_current_camera_position;
@@ -325,13 +325,19 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 					best_offscreen_high_interest_target = unit->sprite->position;
 				}
 			}
-			if (!live_viewport_fight && best_offscreen_high_interest_score > 100.0 && best_offscreen_high_interest_score > best_viewport_score) {
+			bool strong_offscreen_pan_override =
+				best_offscreen_high_interest_score > 100.0 &&
+				best_offscreen_high_interest_score > best_viewport_score * 2.0;
+			if (
+				(!live_viewport_fight && best_offscreen_high_interest_score > 100.0 && best_offscreen_high_interest_score > best_viewport_score) ||
+				strong_offscreen_pan_override
+			) {
 				use_high_interest_only = true;
 			}
 			for (unit_t* unit : eligible_units) {
 				if (!unit || !unit->sprite) continue;
 				double score = observer_v3_effective_interest_score(unit);
-				if (live_viewport_fight && !observer_position_in_viewport(unit->sprite->position)) continue;
+				if (live_viewport_fight && !strong_offscreen_pan_override && !observer_position_in_viewport(unit->sprite->position)) continue;
 				if (use_high_interest_only && score <= 100.0) continue;
 				double dx = (double)unit->sprite->position.x - camera_center.x;
 				double dy = (double)unit->sprite->position.y - camera_center.y;
@@ -358,9 +364,11 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 				weighted_y += weight * unit->sprite->position.y;
 			}
 			if (weight_sum > 0.0 || use_high_interest_only) {
-				xy target = weight_sum > 0.0
-					? xy((int)std::lround(weighted_x / weight_sum), (int)std::lround(weighted_y / weight_sum))
-					: best_offscreen_high_interest_target;
+				xy target = strong_offscreen_pan_override
+					? best_offscreen_high_interest_target
+					: weight_sum > 0.0
+						? xy((int)std::lround(weighted_x / weight_sum), (int)std::lround(weighted_y / weight_sum))
+						: best_offscreen_high_interest_target;
 				observer_focus_position = target;
 				if (observer_position_in_middle_third(target)) {
 					observer_v3_last_target_position = target;

@@ -1075,6 +1075,10 @@ std::string get_observer_debug_summary() {
 	auto best = best_unit ? make_candidate(best_unit, best_score) : candidate_t{};
 	auto best_viewport = best_viewport_unit ? make_candidate(best_viewport_unit, best_viewport_score) : candidate_t{};
 	auto best_offscreen = best_offscreen_unit ? make_candidate(best_offscreen_unit, best_offscreen_score) : candidate_t{};
+	int64_t nuke_hold_remaining_ms =
+		m->observer_v3_nuke_hold_until == std::chrono::steady_clock::time_point::min()
+		? 0
+		: std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(m->observer_v3_nuke_hold_until - now).count());
 	std::ostringstream out;
 	out << "{"
 		<< "\"frame\":" << m->ui.st.current_frame << ","
@@ -1108,7 +1112,7 @@ std::string get_observer_debug_summary() {
 		<< "\"retainViewportFight\":" << (retain_viewport_fight ? "true" : "false") << ","
 		<< "\"jumpCooldownActive\":" << (now < m->observer_v3_jump_cooldown_until ? "true" : "false") << ","
 		<< "\"nukeState\":{"
-			<< "\"holdRemainingMs\":" << std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(m->observer_v3_nuke_hold_until - now).count()) << ","
+			<< "\"holdRemainingMs\":" << nuke_hold_remaining_ms << ","
 			<< "\"holdPositionX\":" << m->observer_v3_nuke_hold_position.x << ","
 			<< "\"holdPositionY\":" << m->observer_v3_nuke_hold_position.y << ","
 			<< "\"hasNukeDot\":" << (has_nuke_dot ? "true" : "false") << ","

@@ -2182,6 +2182,74 @@ test("hidden-only falling missiles do not pin the camera away from late-game com
   assertCleanLogs(logs);
 });
 
+test("high-speed early-game observer does not oscillate between map edges", async ({ page }) => {
+  test.setTimeout(180000);
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, nukeReplayPath, "Hannes");
+  const frame = Math.round((3 * 60 + 47) * 1000 / 42);
+  await page.evaluate((targetFrame) => {
+    _replay_set_value(3, targetFrame);
+    _replay_set_value(0, 32);
+    _replay_set_value(1, 0);
+  }, frame);
+  await page.waitForFunction((targetFrame) => _replay_get_value(2) >= targetFrame, frame, { timeout: 120000 });
+
+  const samples = [];
+  for (let i = 0; i < 40; ++i) {
+    const summary = await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()));
+    samples.push({ frame: summary.frame, screenX: summary.screenPosX, screenY: summary.screenPosY });
+    await page.waitForTimeout(32);
+  }
+
+  let largeSwingCount = 0;
+  for (let i = 1; i < samples.length; ++i) {
+    if (Math.abs(samples[i].screenX - samples[i - 1].screenX) > 1500) ++largeSwingCount;
+  }
+  expect(largeSwingCount).toBeLessThanOrEqual(1);
+  assertCleanLogs(logs);
+});
+
+test("jump cooldown still lets the camera pan away from a weak local fight toward a much stronger offscreen fight", async ({ page }) => {
+  test.setTimeout(180000);
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, nukeReplayPath, "Hannes");
+  const frame = Math.round((42 * 60) * 1000 / 42);
+  await page.evaluate((targetFrame) => {
+    _replay_set_value(3, targetFrame);
+    _replay_set_value(0, 32);
+    _replay_set_value(1, 0);
+  }, frame);
+  await page.waitForFunction((targetFrame) => _replay_get_value(2) >= targetFrame, frame, { timeout: 120000 });
+
+  const samples = [];
+  for (let i = 0; i < 90; ++i) {
+    const summary = await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()));
+    samples.push(summary);
+    await page.waitForTimeout(32);
+  }
+
+  expect(
+    samples.some(
+      (summary) =>
+        summary.jumpCooldownActive &&
+        summary.liveViewportFight &&
+        summary.bestOffscreen.attention &&
+        summary.bestOffscreen.score > summary.bestViewport.score * 2
+    )
+  ).toBe(true);
+
+  const startScreenY = samples[0].screenPosY;
+  let minScreenY = startScreenY;
+  for (const summary of samples) {
+    minScreenY = Math.min(minScreenY, summary.screenPosY);
+  }
+
+  expect(minScreenY).toBeLessThan(startScreenY - 30);
+  assertCleanLogs(logs);
+});
+
 test.fixme("WillyT replay keeps advancing at 128x through the reported 7:38 freeze point", async ({ page }) => {
   test.setTimeout(180000);
   const logs = await createLogCollectors(page);
