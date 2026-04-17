@@ -1575,6 +1575,44 @@ test("viewport export buttons are ordered link then clip then browse then settin
   assertAllCleanLogs(logs);
 });
 
+test("hotkeys modal renders every row legibly in the dark theme", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await waitForHomepageReady(page);
+  await forceClick(page, '[data-open="quick_help"]');
+  await expect(page.locator("#quick_help")).toBeVisible();
+
+  const rows = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('#quick_help tbody tr')).map((tr) => {
+      const style = getComputedStyle(tr);
+      const cells = tr.querySelectorAll('td');
+      return {
+        key: cells[0] ? cells[0].innerText.trim() : '',
+        desc: cells[1] ? cells[1].innerText.trim() : '',
+        backgroundColor: style.backgroundColor,
+        color: cells[0] ? getComputedStyle(cells[0]).color : null
+      };
+    })
+  );
+
+  expect(rows.map((row) => row.key)).toEqual([
+    "N",
+    "A or U",
+    "D or Z",
+    "P or SPACE",
+    "Q, W, E, R",
+    "X, C, V, B",
+    "ARROW KEYS",
+    "-, +",
+    "G",
+    "J"
+  ]);
+  expect(rows.every((row) => row.backgroundColor === "rgba(0, 0, 0, 0)")).toBe(true);
+  expect(rows.every((row) => row.color === "rgb(238, 243, 250)")).toBe(true);
+
+  assertAllCleanLogs(logs);
+});
+
 test("music playlist uses the first player's race only", async ({ page }) => {
   const logs = await createLogCollectors(page, { disableAudio: false });
 
