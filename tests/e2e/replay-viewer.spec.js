@@ -193,6 +193,33 @@ test("remote replay loaded via rep query keeps advancing after startup", async (
   assertAllCleanLogs(logs);
 });
 
+test("rep query boot keeps the homepage controls hidden until the viewer chooses a loading state", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.goto(`/?rep=${encodeURIComponent(basilReplayUrl)}`, { waitUntil: "domcontentloaded" });
+  const initialState = await page.evaluate(() => {
+    const copy = document.querySelector(".pregame-drop-copy");
+    const notes = document.querySelector(".pregame-notes");
+    const button = document.querySelector(".pregame-browse-button");
+    return {
+      bootPending: document.body.classList.contains("pregame-boot-pending"),
+      copyVisibility: copy ? getComputedStyle(copy).visibility : "missing",
+      notesVisibility: notes ? getComputedStyle(notes).visibility : "missing",
+      buttonVisibility: button ? getComputedStyle(button).visibility : "missing"
+    };
+  });
+  expect(initialState.bootPending).toBe(true);
+  expect(initialState.copyVisibility === "hidden" || initialState.copyVisibility === "missing").toBe(true);
+  expect(initialState.notesVisibility === "hidden" || initialState.notesVisibility === "missing").toBe(true);
+  expect(initialState.buttonVisibility === "hidden" || initialState.buttonVisibility === "missing").toBe(true);
+
+  await expect(page.locator(".pregame-status-title")).toContainText(/Loading/);
+  await expect
+    .poll(() => page.evaluate(() => (typeof _replay_get_value === "function" ? _replay_get_value(4) : 0)), { timeout: 120000 })
+    .toBeGreaterThan(0);
+  assertAllCleanLogs(logs);
+});
+
 test("local replay selection works even if chosen before MPQ buffers finish reading", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
@@ -1507,18 +1534,27 @@ test("timestamped link button is hidden for local replays and hidden again after
   assertAllCleanLogs(logs);
 });
 
-test("viewport export buttons are ordered link then clip then settings and video clip fields stack one per row", async ({ page }) => {
+test("viewport export buttons are ordered link then clip then browse then settings and the browse button opens the replay picker", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
   await loadRemoteReplay(page, basilReplayUrl);
   const buttonPositions = await page.evaluate(() =>
-    ["rv-rc-copy-link", "rv-rc-export", "rv-rc-export-settings"].map((id) => {
+    ["rv-rc-copy-link", "rv-rc-export", "rv-rc-open-replay", "rv-rc-export-settings"].map((id) => {
       const rect = document.getElementById(id).getBoundingClientRect();
       return { id, left: Math.round(rect.left), top: Math.round(rect.top) };
     })
   );
   expect(buttonPositions[0].left).toBeLessThan(buttonPositions[1].left);
   expect(buttonPositions[1].left).toBeLessThan(buttonPositions[2].left);
+  expect(buttonPositions[2].left).toBeLessThan(buttonPositions[3].left);
+
+  const chooserPromise = page.waitForEvent("filechooser");
+  await forceClick(page, "#rv-rc-open-replay");
+  const chooser = await chooserPromise;
+  await chooser.setFiles(defaultReplayPath);
+  await expect
+    .poll(() => page.evaluate(() => (typeof _replay_get_value === "function" ? _replay_get_value(4) : 0)), { timeout: 30000 })
+    .toBeGreaterThan(0);
 
   await forceClick(page, "#rv-rc-export-settings");
   await forceClick(page, "#settings-tab-video");
@@ -1556,7 +1592,7 @@ test("music playlist uses the first player's race only", async ({ page }) => {
   assertCleanLogs(logs);
 });
 
-test("music stays in sync with frame advancement across focus changes", async ({ page }) => {
+test("music pauses when the viewer is inactive and only resumes after frame advancement resumes", async ({ page }) => {
   const logs = await createLogCollectors(page, { disableAudio: false });
 
   await page.goto("/");
@@ -1591,6 +1627,7 @@ test("music stays in sync with frame advancement across focus changes", async ({
     note_viewer_frame_progress(currentFrame);
     sync_viewer_runtime_state();
     viewerWindowFocused = false;
+    reset_playback_state_monitor();
     sync_viewer_runtime_state();
     viewerWindowFocused = true;
     sync_viewer_runtime_state();
@@ -1604,8 +1641,8 @@ test("music stays in sync with frame advancement across focus changes", async ({
     };
   });
   expect(state).toEqual({
-    pauseCalls: 0,
-    playCalls: 0,
+    pauseCalls: 1,
+    playCalls: 1,
     paused: false
   });
 

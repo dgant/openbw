@@ -408,6 +408,7 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 				if (!unit || !unit->sprite) continue;
 				double score = observer_v3_effective_interest_score(unit);
 				if (live_viewport_fight && !observer_position_in_viewport(unit->sprite->position)) continue;
+				if (live_viewport_fight && !observer_v3_unit_has_combat_interest(unit)) continue;
 				if (use_high_interest_only && score <= 100.0) continue;
 				double dx = (double)unit->sprite->position.x - camera_center.x;
 				double dy = (double)unit->sprite->position.y - camera_center.y;
