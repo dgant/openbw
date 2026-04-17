@@ -72,9 +72,9 @@ struct main_t {
 	xy observer_focus_position;
 	std::unordered_map<int, int> observer_unit_health;
 	std::chrono::steady_clock::time_point observer_manual_override_until = std::chrono::steady_clock::time_point::min();
-	int observer_v3_jump_cooldown_until_frame = -1;
-	int observer_v3_nuke_hold_until_frame = -1;
-	int observer_v3_viewport_fight_hold_until_frame = -1;
+	std::chrono::steady_clock::time_point observer_v3_jump_cooldown_until = std::chrono::steady_clock::time_point::min();
+	std::chrono::steady_clock::time_point observer_v3_nuke_hold_until = std::chrono::steady_clock::time_point::min();
+	std::chrono::steady_clock::time_point observer_v3_viewport_fight_hold_until = std::chrono::steady_clock::time_point::min();
 	int observer_v3_last_update_frame = -1;
 	xy observer_v3_nuke_hold_position;
 	double observer_v3_camera_x = 0.0;
@@ -124,9 +124,9 @@ struct main_t {
 		observer_focus_position = {};
 		observer_unit_health.clear();
 		observer_manual_override_until = std::chrono::steady_clock::time_point::min();
-		observer_v3_jump_cooldown_until_frame = -1;
-		observer_v3_nuke_hold_until_frame = -1;
-		observer_v3_viewport_fight_hold_until_frame = -1;
+		observer_v3_jump_cooldown_until = std::chrono::steady_clock::time_point::min();
+		observer_v3_nuke_hold_until = std::chrono::steady_clock::time_point::min();
+		observer_v3_viewport_fight_hold_until = std::chrono::steady_clock::time_point::min();
 		observer_v3_last_update_frame = -1;
 		observer_v3_nuke_hold_position = {};
 		observer_v3_camera_x = 0.0;
@@ -232,15 +232,15 @@ struct main_t {
 	bool unit_has_v3_attention_status(unit_t* unit);
 	bool observer_v3_unit_eligible(unit_t* unit) const;
 	void observer_v3_apply_center(xy pos, bool reset_velocity);
-	bool observer_v3_focus_nukes();
+	bool observer_v3_focus_nukes(std::chrono::steady_clock::time_point now);
 	double observer_v3_compute_interest(unit_t* unit);
 	double observer_v3_effective_interest_score(unit_t* unit);
 	template <typename T>
 	void observer_v3_collect_eligible_units(T&& list, a_vector<unit_t*>& out);
 	void observer_v3_update_interest_queue(const a_vector<unit_t*>& eligible_units, int frame_delta);
-	int observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, xy& direct_pan_target, double& best_viewport_score, bool live_viewport_fight, bool stale_viewport_fight_hold);
-	void observer_v3_update_motion();
-	void update_observer_camera_v3();
+	int observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& best_viewport_score, bool live_viewport_fight, bool stale_viewport_fight_hold);
+	void observer_v3_update_motion(std::chrono::steady_clock::time_point now);
+	void update_observer_camera_v3(std::chrono::steady_clock::time_point now);
 
 	bool unit_is_attacking(unit_t* unit) const {
 		if (!unit || !unit->sprite || !unit->order_type) return false;
@@ -313,7 +313,7 @@ struct main_t {
 			return;
 		}
 		observer_last_frame_seen = ui.st.current_frame;
-		update_observer_camera_v3();
+		update_observer_camera_v3(std::chrono::steady_clock::now());
 	}
 
 	void update() {
@@ -1029,8 +1029,7 @@ std::string get_observer_debug_summary() {
 	auto now = std::chrono::steady_clock::now();
 	bool live_viewport_fight = viewport_attention_count != 0;
 	bool stale_viewport_fight_hold = !live_viewport_fight &&
-		m->observer_v3_viewport_fight_hold_until_frame >= 0 &&
-		m->ui.st.current_frame < m->observer_v3_viewport_fight_hold_until_frame;
+		now < m->observer_v3_viewport_fight_hold_until;
 	bool retain_viewport_fight = live_viewport_fight || (stale_viewport_fight_hold && best_viewport_score >= best_offscreen_score);
 
 	bool has_nuke_dot = false;
@@ -1107,11 +1106,9 @@ std::string get_observer_debug_summary() {
 		<< "\"liveViewportFight\":" << (live_viewport_fight ? "true" : "false") << ","
 		<< "\"staleViewportFightHold\":" << (stale_viewport_fight_hold ? "true" : "false") << ","
 		<< "\"retainViewportFight\":" << (retain_viewport_fight ? "true" : "false") << ","
-		<< "\"jumpCooldownActive\":" << (
-			m->observer_v3_jump_cooldown_until_frame >= 0 &&
-			m->ui.st.current_frame < m->observer_v3_jump_cooldown_until_frame ? "true" : "false") << ","
+		<< "\"jumpCooldownActive\":" << (now < m->observer_v3_jump_cooldown_until ? "true" : "false") << ","
 		<< "\"nukeState\":{"
-			<< "\"holdUntilFrame\":" << m->observer_v3_nuke_hold_until_frame << ","
+			<< "\"holdRemainingMs\":" << std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(m->observer_v3_nuke_hold_until - now).count()) << ","
 			<< "\"holdPositionX\":" << m->observer_v3_nuke_hold_position.x << ","
 			<< "\"holdPositionY\":" << m->observer_v3_nuke_hold_position.y << ","
 			<< "\"hasNukeDot\":" << (has_nuke_dot ? "true" : "false") << ","
