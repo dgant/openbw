@@ -104,6 +104,12 @@ async function forceClick(page, selector) {
   }, selector);
 }
 
+async function triggerKeyup(page, keyCode) {
+  await page.evaluate((code) => {
+    $(document).trigger($.Event("keyup", { keyCode: code, which: code }));
+  }, keyCode);
+}
+
 async function getFooterVolumeHandleTop(page) {
   return page.evaluate(() => {
     const slider = document.querySelector("#volume-slider");
@@ -691,6 +697,59 @@ test("basic HUD toggles and hotkeys work during replay playback", async ({ page 
   await expect(page.locator("#rv-rc-timer")).not.toHaveClass(/scrub-preview/);
 
   assertCleanLogs(logs);
+});
+
+test("updated playback hotkeys use A/D, SPACE, Pause, and Z/X/C/V while removing old aliases", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+  await page.evaluate(() => {
+    _replay_set_value(0, 128);
+    _replay_set_value(1, 0);
+  });
+  await expect.poll(() => page.evaluate(() => _replay_get_value(2)), { timeout: 30000 }).toBeGreaterThan(900);
+  await page.evaluate(() => {
+    _replay_set_value(0, 1);
+    _replay_set_value(1, 1);
+  });
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(1);
+
+  await triggerKeyup(page, 32);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(0);
+  await triggerKeyup(page, 32);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(1);
+  await triggerKeyup(page, 80);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(1);
+  await triggerKeyup(page, 19);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(0);
+  await triggerKeyup(page, 19);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(1);
+
+  await triggerKeyup(page, 65);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(0))).toBe(2);
+  await triggerKeyup(page, 85);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(0))).toBe(2);
+  await triggerKeyup(page, 68);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(0))).toBe(1);
+
+  const jumpState = await page.evaluate(() => {
+    const current = _replay_get_value(2);
+    return { current, target: _replay_get_value(3) };
+  });
+  expect(jumpState.current).toBeGreaterThan(800);
+
+  await triggerKeyup(page, 90);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(3))).toBe(Math.max(0, jumpState.current - Math.round((1000 / 42) * 30)));
+  await triggerKeyup(page, 88);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(3))).toBe(Math.max(0, jumpState.current - Math.round((1000 / 42) * 10)));
+  await triggerKeyup(page, 67);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(3))).toBe(jumpState.current + Math.round((1000 / 42) * 10));
+  await triggerKeyup(page, 86);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(3))).toBe(jumpState.current + Math.round((1000 / 42) * 30));
+  await triggerKeyup(page, 66);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(3))).toBe(jumpState.current + Math.round((1000 / 42) * 30));
+
+  assertAllCleanLogs(logs);
 });
 
 test("volume and mute settings persist across reloads", async ({ page }) => {
@@ -1597,15 +1656,27 @@ test("hotkeys modal renders every row legibly in the dark theme", async ({ page 
 
   expect(rows.map((row) => row.key)).toEqual([
     "N",
-    "A or U",
-    "D or Z",
-    "P or SPACE",
+    "A",
+    "D",
+    "SPACE",
     "Q, W, E, R",
-    "X, C, V, B",
-    "ARROW KEYS",
+    "Z, X, C, V",
+    "← ↑ → ↓",
     "-, +",
     "G",
     "J"
+  ]);
+  expect(rows.map((row) => row.desc)).toEqual([
+    "No-spoiler mode.",
+    "Double playback speed.",
+    "Halve playback speed.",
+    "Pause/unpause.",
+    "Pause, then jump -10/-1/+1/+10 frames.",
+    "Jump -30/-10/+10/+30 seconds.",
+    "Pan camera.",
+    "Zoom out/in.",
+    "Show/hide info graphs.",
+    "Open the jump dialog."
   ]);
   expect(rows.every((row) => row.backgroundColor === "rgba(0, 0, 0, 0)")).toBe(true);
   expect(rows.every((row) => row.color === "rgb(238, 243, 250)")).toBe(true);
@@ -1637,12 +1708,16 @@ test("music pauses when the viewer is inactive and only resumes after frame adva
   const state = await page.evaluate(async () => {
     audioCategorySettings.music.enabled = true;
     let currentFrame = 100;
+    let paused = 0;
     window.main_has_been_called = true;
     window._replay_get_value = (key) => {
-      if (key === 1) return 0;
+      if (key === 1) return paused;
       if (key === 2) return currentFrame;
       if (key === 4) return 200;
       return 0;
+    };
+    window._replay_set_value = (key, value) => {
+      if (key === 1) paused = value;
     };
     musicState.unlocked = true;
     musicState.playlist = ["track.mp3"];
@@ -1667,18 +1742,24 @@ test("music pauses when the viewer is inactive and only resumes after frame adva
     viewerWindowFocused = false;
     reset_playback_state_monitor();
     sync_viewer_runtime_state();
+    const pausedWhileInactive = paused;
     viewerWindowFocused = true;
     sync_viewer_runtime_state();
+    const resumedOnRefocus = paused;
     currentFrame = 101;
     note_viewer_frame_progress(currentFrame);
     sync_viewer_runtime_state();
     return {
+      pausedWhileInactive,
+      resumedOnRefocus,
       pauseCalls: musicState.audio.pauseCalls,
       playCalls: musicState.audio.playCalls,
       paused: musicState.audio.paused
     };
   });
   expect(state).toEqual({
+    pausedWhileInactive: 1,
+    resumedOnRefocus: 0,
     pauseCalls: 1,
     playCalls: 1,
     paused: false
