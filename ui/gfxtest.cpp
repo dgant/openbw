@@ -248,7 +248,7 @@ struct main_t {
 	template <typename T>
 	void observer_v3_collect_eligible_units(T&& list, a_vector<unit_t*>& out);
 	void observer_v3_update_interest_queue(const a_vector<unit_t*>& eligible_units, int frame_delta);
-	int observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& best_viewport_score, bool live_viewport_fight, bool stale_viewport_fight_hold);
+	int observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& direct_pan_score, double& best_viewport_score, bool live_viewport_fight, bool stale_viewport_fight_hold);
 	void observer_v3_update_motion(std::chrono::steady_clock::time_point now);
 	void update_observer_camera_v3(std::chrono::steady_clock::time_point now);
 
@@ -1069,8 +1069,10 @@ std::string get_observer_debug_summary() {
 	xy nuke_paint_ghost_position{};
 	bool has_visible_falling_nuke = false;
 	xy visible_falling_nuke_position{};
+	xy visible_falling_nuke_sprite_position{};
 	bool has_hidden_falling_nuke = false;
 	xy hidden_falling_nuke_position{};
+	xy hidden_falling_nuke_sprite_position{};
 	auto scan_nuke_state = [&](auto&& list, bool visible_list) {
 		for (unit_t* unit : list) {
 			if (!unit || !unit->sprite) continue;
@@ -1088,13 +1090,16 @@ std::string get_observer_debug_summary() {
 			}
 			if (!m->ui.unit_is(unit, UnitTypes::Terran_Nuclear_Missile)) continue;
 			if (unit->velocity.y <= 0_fp8) continue;
+			xy nuke_target = unit->order_target.pos != xy() ? unit->order_target.pos : unit->sprite->position;
 			if (visible_list && !has_visible_falling_nuke) {
 				has_visible_falling_nuke = true;
-				visible_falling_nuke_position = unit->sprite->position;
+				visible_falling_nuke_position = nuke_target;
+				visible_falling_nuke_sprite_position = unit->sprite->position;
 			}
 			if (!visible_list && !has_hidden_falling_nuke) {
 				has_hidden_falling_nuke = true;
-				hidden_falling_nuke_position = unit->sprite->position;
+				hidden_falling_nuke_position = nuke_target;
+				hidden_falling_nuke_sprite_position = unit->sprite->position;
 			}
 		}
 	};
@@ -1155,9 +1160,13 @@ std::string get_observer_debug_summary() {
 			<< "\"hasVisibleFallingNuke\":" << (has_visible_falling_nuke ? "true" : "false") << ","
 			<< "\"visibleFallingNukeX\":" << visible_falling_nuke_position.x << ","
 			<< "\"visibleFallingNukeY\":" << visible_falling_nuke_position.y << ","
+			<< "\"visibleFallingNukeSpriteX\":" << visible_falling_nuke_sprite_position.x << ","
+			<< "\"visibleFallingNukeSpriteY\":" << visible_falling_nuke_sprite_position.y << ","
 			<< "\"hasHiddenFallingNuke\":" << (has_hidden_falling_nuke ? "true" : "false") << ","
 			<< "\"hiddenFallingNukeX\":" << hidden_falling_nuke_position.x << ","
-			<< "\"hiddenFallingNukeY\":" << hidden_falling_nuke_position.y
+			<< "\"hiddenFallingNukeY\":" << hidden_falling_nuke_position.y << ","
+			<< "\"hiddenFallingNukeSpriteX\":" << hidden_falling_nuke_sprite_position.x << ","
+			<< "\"hiddenFallingNukeSpriteY\":" << hidden_falling_nuke_sprite_position.y
 		<< "},"
 		<< "\"best\":{"
 			<< "\"unitId\":" << best.unit_id << ","

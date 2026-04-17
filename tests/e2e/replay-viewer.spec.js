@@ -2446,6 +2446,39 @@ test("hidden-only falling missiles do not pin the camera away from late-game com
   assertCleanLogs(logs);
 });
 
+test("visible falling missiles center on their landing point instead of the missile sprite", async ({ page }) => {
+  test.setTimeout(180000);
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, nukeReplayPath, "Hannes");
+  await page.evaluate((frame) => {
+    _replay_set_value(3, frame);
+    _replay_set_value(0, 128);
+    _replay_set_value(1, 0);
+  }, 56000);
+  await page.waitForFunction((frame) => _replay_get_value(2) >= frame, 56000, { timeout: 120000 });
+
+  let summary = null;
+  const searchDeadline = Date.now() + 90000;
+  while (Date.now() < searchDeadline) {
+    const value = await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()));
+    if (value.nukeState.hasVisibleFallingNuke && (value.actualApplyCenterReason === 1 || value.actualApplyCenterReason === 2)) {
+      summary = value;
+      break;
+    }
+    await page.waitForTimeout(250);
+  }
+  expect(summary).not.toBeNull();
+
+  expect(summary.nukeState.holdPositionX).toBe(summary.nukeState.visibleFallingNukeX);
+  expect(summary.nukeState.holdPositionY).toBe(summary.nukeState.visibleFallingNukeY);
+  expect(summary.actualApplyCenterInputX).toBe(summary.nukeState.visibleFallingNukeX);
+  expect(summary.actualApplyCenterInputY).toBe(summary.nukeState.visibleFallingNukeY);
+  expect(summary.nukeState.visibleFallingNukeSpriteX !== summary.nukeState.visibleFallingNukeX || summary.nukeState.visibleFallingNukeSpriteY !== summary.nukeState.visibleFallingNukeY).toBe(true);
+
+  assertCleanLogs(logs);
+});
+
 test("high-speed early-game observer does not oscillate between map edges", async ({ page }) => {
   test.setTimeout(180000);
   const logs = await createLogCollectors(page);
