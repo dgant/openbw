@@ -62,6 +62,46 @@ inline bool main_t::observer_v3_unit_eligible(unit_t* unit) const {
 	return true;
 }
 
+inline bool main_t::observer_v3_unit_has_combat_interest(unit_t* unit) {
+	if (!unit || !unit->sprite) return false;
+	int unit_key = (int)ui.get_unit_id_32(unit).raw_value;
+	if (unit_has_v3_attention_status(unit)) {
+		observer_v3_combat_interest_until_frame[unit_key] = ui.st.current_frame + 96;
+		return true;
+	}
+	auto it = observer_v3_combat_interest_until_frame.find(unit_key);
+	return it != observer_v3_combat_interest_until_frame.end() && ui.st.current_frame <= it->second;
+}
+
+inline int main_t::observer_v3_combat_cluster_count(unit_t* unit, const a_vector<unit_t*>& eligible_units) {
+	if (!unit || !unit->sprite || !observer_v3_unit_has_combat_interest(unit)) return 0;
+	int count = 0;
+	double radius_sq = 192.0 * 192.0;
+	for (unit_t* other : eligible_units) {
+		if (!other || !other->sprite) continue;
+		if (!observer_v3_unit_has_combat_interest(other)) continue;
+		if (observer_distance_sq(unit->sprite->position, other->sprite->position) <= radius_sq) ++count;
+	}
+	return count;
+}
+
+inline xy main_t::observer_v3_clamp_target_center(xy target) const {
+	xy screen_pos = target - observer_view_center_offset();
+	if (screen_pos.y + (int)ui.view_height > ui.game_st.map_height) screen_pos.y = ui.game_st.map_height - ui.view_height;
+	if (screen_pos.y < 0) screen_pos.y = 0;
+	if (screen_pos.x + (int)ui.view_width > ui.game_st.map_width) screen_pos.x = ui.game_st.map_width - ui.view_width;
+	if (screen_pos.x < 0) screen_pos.x = 0;
+	return screen_pos + observer_view_center_offset();
+}
+
+inline bool main_t::observer_v3_pan_would_break_hysteresis(unit_t* unit, xy target) const {
+	if (!unit || !unit->sprite) return false;
+	if (!observer_position_in_middle_third(unit->sprite->position)) return false;
+	xy clamped_target = observer_v3_clamp_target_center(target);
+	return std::abs(unit->sprite->position.x - clamped_target.x) > (int)ui.view_width / 6 ||
+		std::abs(unit->sprite->position.y - clamped_target.y) > (int)ui.view_height / 6;
+}
+
 inline void main_t::observer_v3_apply_center(xy pos, bool reset_velocity) {
 	if (reset_velocity) {
 		observer_v3_velocity_x = 0.0;
@@ -157,11 +197,12 @@ inline double main_t::observer_v3_compute_interest(unit_t* unit) {
 	int last_viewport_frame = seen_in_viewport ? observer_v3_last_viewport_frame[unit_key] : 0;
 	int frames_since_viewport = seen_in_viewport ? ui.st.current_frame - last_viewport_frame : ui.st.current_frame;
 	if (frames_since_viewport < 0) frames_since_viewport = 0;
+	bool has_combat_interest = observer_v3_unit_has_combat_interest(unit);
 	double score =
 		(1.0 +
 			((is_building || is_worker) ? 0.0 : 1.0) +
 			((seen_in_viewport || !is_building || is_supply_building) ? 0.0 : 2.0) +
-			(unit_has_v3_attention_status(unit) ? 100.0 : 0.0)) *
+			(has_combat_interest ? 100.0 : 0.0)) *
 		(1.0 + std::min(2.0, 0.002 * (double)frames_since_viewport));
 	observer_v3_interest_scores[unit_key] = score;
 	return score;
@@ -169,9 +210,10 @@ inline double main_t::observer_v3_compute_interest(unit_t* unit) {
 
 inline double main_t::observer_v3_effective_interest_score(unit_t* unit) {
 	int unit_key = (int)ui.get_unit_id_32(unit).raw_value;
+	bool has_combat_interest = observer_v3_unit_has_combat_interest(unit);
 	auto it = observer_v3_interest_scores.find(unit_key);
 	if (it == observer_v3_interest_scores.end()) return observer_v3_compute_interest(unit);
-	if (it->second > 100.0 || observer_position_in_viewport(unit->sprite->position)) {
+	if (has_combat_interest || it->second > 100.0 || observer_position_in_viewport(unit->sprite->position)) {
 		return observer_v3_compute_interest(unit);
 	}
 	return it->second;
@@ -207,17 +249,29 @@ inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eli
 	double best_score = -1.0;
 	best_viewport_score = 0.0;
 	double best_offscreen_score = 0.0;
+	int best_cluster_count = -1;
+	int best_offscreen_cluster_count = -1;
 	for (unit_t* unit : eligible_units) {
-		int unit_key = (int)ui.get_unit_id_32(unit).raw_value;
 		double score = observer_v3_effective_interest_score(unit);
-		if (observer_position_in_viewport(unit->sprite->position) && score > best_viewport_score) best_viewport_score = score;
-		if (!observer_position_in_viewport(unit->sprite->position) && score > best_offscreen_score) {
+		bool in_viewport = observer_position_in_viewport(unit->sprite->position);
+		bool has_combat_interest = observer_v3_unit_has_combat_interest(unit);
+		int cluster_count = has_combat_interest ? observer_v3_combat_cluster_count(unit, eligible_units) : 0;
+		if (in_viewport && score > best_viewport_score) best_viewport_score = score;
+		if (!in_viewport && (
+			score > best_offscreen_score ||
+			(score == best_offscreen_score && has_combat_interest && cluster_count > best_offscreen_cluster_count)
+		)) {
 			best_offscreen_score = score;
 			best_offscreen_unit = unit;
+			best_offscreen_cluster_count = cluster_count;
 		}
-		if (score > best_score) {
+		if (
+			score > best_score ||
+			(score == best_score && has_combat_interest && cluster_count > best_cluster_count)
+		) {
 			best_score = score;
 			best_unit = unit;
+			best_cluster_count = cluster_count;
 		}
 	}
 	observer_v3_last_best_offscreen_score = best_offscreen_score;
@@ -271,10 +325,27 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 		xy direct_pan_target{};
 		double best_viewport_score = 0.0;
 		int viewport_attention_count = 0;
+		auto decelerate_velocity = [&]() {
+			double velocity_length = std::sqrt(observer_v3_velocity_x * observer_v3_velocity_x + observer_v3_velocity_y * observer_v3_velocity_y);
+			if (velocity_length <= 0.0) return;
+			double decel = 128.0 * dt;
+			double next_length = std::max(0.0, velocity_length - decel);
+			double scale = velocity_length == 0.0 ? 0.0 : next_length / velocity_length;
+			observer_v3_velocity_x *= scale;
+			observer_v3_velocity_y *= scale;
+		};
+		auto should_refuse_pan_target = [&](xy target) {
+			for (unit_t* unit : eligible_units) {
+				if (!unit || !unit->sprite) continue;
+				if (!observer_v3_unit_has_combat_interest(unit)) continue;
+				if (observer_v3_pan_would_break_hysteresis(unit, target)) return true;
+			}
+			return false;
+		};
 		for (unit_t* unit : eligible_units) {
 			if (!unit || !unit->sprite) continue;
 			if (!observer_position_in_viewport(unit->sprite->position)) continue;
-			if (!unit_has_v3_attention_status(unit)) continue;
+			if (!observer_v3_unit_has_combat_interest(unit)) continue;
 			if (ui.ut_worker(unit)) continue;
 			if (!ui.unit_can_attack(unit)) continue;
 			++viewport_attention_count;
@@ -291,16 +362,21 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 		int jump_action = observer_v3_try_jump_to_interest(eligible_units, now, direct_pan_target, best_viewport_score, live_viewport_fight, stale_viewport_fight_hold);
 		observer_v3_last_best_viewport_score = best_viewport_score;
 		if (jump_action == 1) {
-			observer_v3_last_action = 1;
-			observer_v3_last_target_position = direct_pan_target;
-			observer_focus_position = direct_pan_target;
-			double dx = (double)direct_pan_target.x - observer_v3_camera_x;
-			double dy = (double)direct_pan_target.y - observer_v3_camera_y;
-			double length = std::sqrt(dx * dx + dy * dy);
-			if (length > 0.0) {
-				double accel = 64.0 * dt;
-				observer_v3_velocity_x += (dx / length) * accel;
-				observer_v3_velocity_y += (dy / length) * accel;
+			if (should_refuse_pan_target(direct_pan_target)) {
+				observer_v3_last_target_position = observer_current_camera_position;
+				decelerate_velocity();
+			} else {
+				observer_v3_last_action = 1;
+				observer_v3_last_target_position = direct_pan_target;
+				observer_focus_position = direct_pan_target;
+				double dx = (double)direct_pan_target.x - observer_v3_camera_x;
+				double dy = (double)direct_pan_target.y - observer_v3_camera_y;
+				double length = std::sqrt(dx * dx + dy * dy);
+				if (length > 0.0) {
+					double accel = 64.0 * dt;
+					observer_v3_velocity_x += (dx / length) * accel;
+					observer_v3_velocity_y += (dy / length) * accel;
+				}
 			}
 		} else if (jump_action == 0) {
 			double weight_sum = 0.0;
@@ -325,19 +401,13 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 					best_offscreen_high_interest_target = unit->sprite->position;
 				}
 			}
-			bool strong_offscreen_pan_override =
-				best_offscreen_high_interest_score > 100.0 &&
-				best_offscreen_high_interest_score > best_viewport_score * 2.0;
-			if (
-				(!live_viewport_fight && best_offscreen_high_interest_score > 100.0 && best_offscreen_high_interest_score > best_viewport_score) ||
-				strong_offscreen_pan_override
-			) {
+			if (!live_viewport_fight && best_offscreen_high_interest_score > 100.0 && best_offscreen_high_interest_score > best_viewport_score) {
 				use_high_interest_only = true;
 			}
 			for (unit_t* unit : eligible_units) {
 				if (!unit || !unit->sprite) continue;
 				double score = observer_v3_effective_interest_score(unit);
-				if (live_viewport_fight && !strong_offscreen_pan_override && !observer_position_in_viewport(unit->sprite->position)) continue;
+				if (live_viewport_fight && !observer_position_in_viewport(unit->sprite->position)) continue;
 				if (use_high_interest_only && score <= 100.0) continue;
 				double dx = (double)unit->sprite->position.x - camera_center.x;
 				double dy = (double)unit->sprite->position.y - camera_center.y;
@@ -364,32 +434,28 @@ inline void main_t::observer_v3_update_motion(std::chrono::steady_clock::time_po
 				weighted_y += weight * unit->sprite->position.y;
 			}
 			if (weight_sum > 0.0 || use_high_interest_only) {
-				xy target = strong_offscreen_pan_override
-					? best_offscreen_high_interest_target
-					: weight_sum > 0.0
-						? xy((int)std::lround(weighted_x / weight_sum), (int)std::lround(weighted_y / weight_sum))
-						: best_offscreen_high_interest_target;
-				observer_focus_position = target;
-				if (observer_position_in_middle_third(target)) {
-					observer_v3_last_target_position = target;
-					double velocity_length = std::sqrt(observer_v3_velocity_x * observer_v3_velocity_x + observer_v3_velocity_y * observer_v3_velocity_y);
-					if (velocity_length > 0.0) {
-						double decel = 128.0 * dt;
-						double next_length = std::max(0.0, velocity_length - decel);
-						double scale = velocity_length == 0.0 ? 0.0 : next_length / velocity_length;
-						observer_v3_velocity_x *= scale;
-						observer_v3_velocity_y *= scale;
-					}
+				xy target = weight_sum > 0.0
+					? xy((int)std::lround(weighted_x / weight_sum), (int)std::lround(weighted_y / weight_sum))
+					: best_offscreen_high_interest_target;
+				if (should_refuse_pan_target(target)) {
+					observer_v3_last_target_position = observer_current_camera_position;
+					decelerate_velocity();
 				} else {
-					observer_v3_last_action = 3;
-					observer_v3_last_target_position = target;
-					double dx = (double)target.x - observer_v3_camera_x;
-					double dy = (double)target.y - observer_v3_camera_y;
-					double length = std::sqrt(dx * dx + dy * dy);
-					if (length > 0.0) {
-						double accel = 64.0 * dt;
-						observer_v3_velocity_x += (dx / length) * accel;
-						observer_v3_velocity_y += (dy / length) * accel;
+					observer_focus_position = target;
+					if (observer_position_in_middle_third(target)) {
+						observer_v3_last_target_position = target;
+						decelerate_velocity();
+					} else {
+						observer_v3_last_action = 3;
+						observer_v3_last_target_position = target;
+						double dx = (double)target.x - observer_v3_camera_x;
+						double dy = (double)target.y - observer_v3_camera_y;
+						double length = std::sqrt(dx * dx + dy * dy);
+						if (length > 0.0) {
+							double accel = 64.0 * dt;
+							observer_v3_velocity_x += (dx / length) * accel;
+							observer_v3_velocity_y += (dy / length) * accel;
+						}
 					}
 				}
 			}

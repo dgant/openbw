@@ -95,6 +95,7 @@ struct main_t {
 	std::unordered_map<int, double> observer_v3_interest_scores;
 	std::unordered_map<int, int> observer_v3_last_viewport_frame;
 	std::unordered_map<int, bool> observer_v3_ever_viewport_visible;
+	std::unordered_map<int, int> observer_v3_combat_interest_until_frame;
 
 	main_t(game_player player) : ui(std::move(player)) {}
 
@@ -147,6 +148,7 @@ struct main_t {
 		observer_v3_interest_scores.clear();
 		observer_v3_last_viewport_frame.clear();
 		observer_v3_ever_viewport_visible.clear();
+		observer_v3_combat_interest_until_frame.clear();
 	}
 
 	void clamp_screen_pos() {
@@ -230,6 +232,10 @@ struct main_t {
 	bool unit_is_under_dark_swarm_v3(const unit_t* unit) const;
 	bool unit_is_under_disruption_web_v3(const unit_t* unit) const;
 	bool unit_has_v3_attention_status(unit_t* unit);
+	bool observer_v3_unit_has_combat_interest(unit_t* unit);
+	int observer_v3_combat_cluster_count(unit_t* unit, const a_vector<unit_t*>& eligible_units);
+	xy observer_v3_clamp_target_center(xy target) const;
+	bool observer_v3_pan_would_break_hysteresis(unit_t* unit, xy target) const;
 	bool observer_v3_unit_eligible(unit_t* unit) const;
 	void observer_v3_apply_center(xy pos, bool reset_velocity);
 	bool observer_v3_focus_nukes(std::chrono::steady_clock::time_point now);
@@ -988,7 +994,7 @@ std::string get_observer_debug_summary() {
 		}
 		r.ground_cd = unit->ground_weapon_cooldown;
 		r.air_cd = unit->air_weapon_cooldown;
-		r.attention = m->unit_has_v3_attention_status(unit);
+		r.attention = m->observer_v3_unit_has_combat_interest(unit);
 		r.score = score;
 		return r;
 	};
@@ -1008,7 +1014,7 @@ std::string get_observer_debug_summary() {
 		if (!unit || !unit->sprite) continue;
 		double score = m->observer_v3_effective_interest_score(unit);
 		bool in_viewport = m->observer_position_in_viewport(unit->sprite->position);
-		bool attention = m->unit_has_v3_attention_status(unit);
+		bool attention = m->observer_v3_unit_has_combat_interest(unit);
 		if (attention) ++attention_count;
 		if (in_viewport) {
 			++viewport_count;
