@@ -752,6 +752,39 @@ test("updated playback hotkeys use A/D, SPACE, Pause, and Z/X/C/V while removing
   assertAllCleanLogs(logs);
 });
 
+test("opening and closing viewer modals pauses active playback and restores it on close", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+  await page.evaluate(() => {
+    _replay_set_value(1, 0);
+  });
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(0);
+
+  await forceClick(page, '[data-open="quick_help"]');
+  await expect(page.locator("#quick_help")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(1);
+  await forceClick(page, "#quick_help .close-button");
+  await expect(page.locator("#quick_help")).toBeHidden();
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(0);
+
+  await page.keyboard.press("j");
+  await expect(page.locator("#goto")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(1);
+  await forceClick(page, "#goto .close-button");
+  await expect(page.locator("#goto")).toBeHidden();
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(0);
+
+  await forceClick(page, "#rv-rc-export-settings");
+  await expect(page.locator("#export_settings")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(1);
+  await forceClick(page, "#export_settings .close-button");
+  await expect(page.locator("#export_settings")).toBeHidden();
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(0);
+
+  assertAllCleanLogs(logs);
+});
+
 test("volume and mute settings persist across reloads", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
@@ -1701,7 +1734,7 @@ test("music playlist uses the first player's race only", async ({ page }) => {
   assertCleanLogs(logs);
 });
 
-test("music pauses when the viewer is inactive and only resumes after frame advancement resumes", async ({ page }) => {
+test("music keeps playing across focus changes while playback remains active", async ({ page }) => {
   const logs = await createLogCollectors(page, { disableAudio: false });
 
   await page.goto("/");
@@ -1740,28 +1773,27 @@ test("music pauses when the viewer is inactive and only resumes after frame adva
     note_viewer_frame_progress(currentFrame);
     sync_viewer_runtime_state();
     viewerWindowFocused = false;
-    reset_playback_state_monitor();
     sync_viewer_runtime_state();
     const pausedWhileInactive = paused;
     viewerWindowFocused = true;
     sync_viewer_runtime_state();
-    const resumedOnRefocus = paused;
+    const pausedAfterRefocus = paused;
     currentFrame = 101;
     note_viewer_frame_progress(currentFrame);
     sync_viewer_runtime_state();
     return {
       pausedWhileInactive,
-      resumedOnRefocus,
+      pausedAfterRefocus,
       pauseCalls: musicState.audio.pauseCalls,
       playCalls: musicState.audio.playCalls,
       paused: musicState.audio.paused
     };
   });
   expect(state).toEqual({
-    pausedWhileInactive: 1,
-    resumedOnRefocus: 0,
-    pauseCalls: 1,
-    playCalls: 1,
+    pausedWhileInactive: 0,
+    pausedAfterRefocus: 0,
+    pauseCalls: 0,
+    playCalls: 0,
     paused: false
   });
 
