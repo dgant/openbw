@@ -1703,7 +1703,7 @@ test("timestamped link button is hidden for local replays and hidden again after
   assertAllCleanLogs(logs);
 });
 
-test("viewport export buttons are ordered link then clip then browse then settings and the browse button opens the replay picker", async ({ page }) => {
+test("viewport export buttons place settings/open on the top row and link/clip on the bottom row with link left of clip", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
   await loadRemoteReplay(page, basilReplayUrl);
@@ -1713,9 +1713,12 @@ test("viewport export buttons are ordered link then clip then browse then settin
       return { id, left: Math.round(rect.left), top: Math.round(rect.top) };
     })
   );
-  expect(buttonPositions[0].left).toBeLessThan(buttonPositions[1].left);
-  expect(buttonPositions[1].left).toBeLessThan(buttonPositions[2].left);
-  expect(buttonPositions[2].left).toBeLessThan(buttonPositions[3].left);
+  const positionsById = Object.fromEntries(buttonPositions.map((position) => [position.id, position]));
+  expect(positionsById["rv-rc-export-settings"].top).toBe(positionsById["rv-rc-open-replay"].top);
+  expect(positionsById["rv-rc-copy-link"].top).toBe(positionsById["rv-rc-export"].top);
+  expect(positionsById["rv-rc-export-settings"].top).toBeLessThan(positionsById["rv-rc-copy-link"].top);
+  expect(positionsById["rv-rc-export-settings"].left).toBeLessThan(positionsById["rv-rc-open-replay"].left);
+  expect(positionsById["rv-rc-copy-link"].left).toBeLessThan(positionsById["rv-rc-export"].left);
 
   const chooserPromise = page.waitForEvent("filechooser");
   await forceClick(page, "#rv-rc-open-replay");
@@ -2178,7 +2181,7 @@ test("viewer toggle settings persist across reload", async ({ page }) => {
   assertCleanLogs(logs);
 });
 
-test("red-blue mode still recolors the terminal replay frame", async ({ page }) => {
+test("red-blue mode recolors the terminal replay frame as playback naturally reaches done", async ({ page }) => {
   test.setTimeout(120000);
   const logs = await createLogCollectors(page);
 
@@ -2192,25 +2195,86 @@ test("red-blue mode still recolors the terminal replay frame", async ({ page }) 
     _replay_set_value(1, 0);
   });
   await page.waitForFunction(() => _replay_get_value(2) >= _replay_get_value(4), null, { timeout: 90000 });
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(300);
 
-  const before = await page.evaluate(() => ({
+  const recoloredAtDone = await page.evaluate(() => ({
     presentCount: _ui_get_present_count(),
     dataUrl: Module.canvas.toDataURL("image/png")
   }));
+  await page.waitForTimeout(800);
+  const recoloredAfterIdle = await page.evaluate(() => ({
+    presentCount: _ui_get_present_count(),
+    dataUrl: Module.canvas.toDataURL("image/png")
+  }));
+  expect(recoloredAfterIdle.dataUrl).toBe(recoloredAtDone.dataUrl);
 
   await forceClick(page, "#rv-rc-force-colors");
   await expect(page.locator("#rv-rc-force-colors")).not.toHaveClass(/is-enabled/);
   await page.waitForTimeout(250);
 
-  const after = await page.evaluate(() => ({
+  const naturalColorsAfterToggle = await page.evaluate(() => ({
     presentCount: _ui_get_present_count(),
     dataUrl: Module.canvas.toDataURL("image/png")
   }));
-  expect(after.presentCount).toBeGreaterThan(before.presentCount);
-  expect(before.dataUrl).not.toBe(after.dataUrl);
+  expect(naturalColorsAfterToggle.presentCount).toBeGreaterThan(recoloredAtDone.presentCount);
+  expect(recoloredAtDone.dataUrl).not.toBe(naturalColorsAfterToggle.dataUrl);
 
   assertCleanLogs(logs);
+});
+
+test("minimap dragging stays responsive after playback reaches done", async ({ page }) => {
+  test.setTimeout(120000);
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+  await page.evaluate(() => {
+    _ui_set_screen_center_manual(500, 500);
+    const endFrame = _replay_get_value(4);
+    _replay_set_value(3, endFrame);
+    _replay_set_value(0, 128);
+    _replay_set_value(1, 0);
+    if (typeof resume_viewer_main_loop === "function") {
+      resume_viewer_main_loop();
+    }
+  });
+  await page.locator("#canvas").click({ position: { x: 40, y: 40 } });
+  await page.waitForFunction(() => _replay_get_value(2) >= _replay_get_value(4), null, { timeout: 90000 });
+  await page.waitForTimeout(800);
+
+  const canvas = page.locator("#canvas");
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error("Canvas geometry is unavailable");
+  const startX = box.x + 20;
+  const endX = box.x + 108;
+  const dragY = box.y + box.height - 20;
+
+  await page.mouse.move(startX, dragY);
+  await page.mouse.down();
+  await page.waitForTimeout(700);
+  await page.mouse.move(startX + 30, dragY, { steps: 6 });
+  const afterFirstSegment = await page.evaluate(() => ({
+    x: _ui_get_screen_pos(0),
+    y: _ui_get_screen_pos(1)
+  }));
+  await page.waitForTimeout(700);
+  await page.mouse.move(startX + 60, dragY, { steps: 6 });
+  const afterSecondSegment = await page.evaluate(() => ({
+    x: _ui_get_screen_pos(0),
+    y: _ui_get_screen_pos(1)
+  }));
+  await page.waitForTimeout(700);
+  await page.mouse.move(endX, dragY, { steps: 6 });
+  const afterThirdSegment = await page.evaluate(() => ({
+    x: _ui_get_screen_pos(0),
+    y: _ui_get_screen_pos(1)
+  }));
+  await page.mouse.up();
+
+  expect(afterFirstSegment.x).toBeGreaterThan(0);
+  expect(afterSecondSegment.x).toBeGreaterThan(afterFirstSegment.x);
+  expect(afterThirdSegment.x).toBeGreaterThan(afterSecondSegment.x);
+
+  assertAllCleanLogs(logs);
 });
 
 test("nuclear launch viewport alert banner tracks the canvas and uses plain white text styling", async ({ page }) => {

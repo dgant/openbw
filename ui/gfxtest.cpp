@@ -170,6 +170,63 @@ struct main_t {
 		if (ui.screen_pos.x < 0) ui.screen_pos.x = 0;
 	}
 
+	void advance_replay_once_for_visual() {
+		ui.replay_functions::next_frame();
+		for (auto& v : ui.apm) v.update(ui.st.current_frame);
+	}
+
+	void redraw_terminal_replay_frame() {
+		if (ui.replay_st.end_frame <= 0 || ui.st.current_frame != ui.replay_st.end_frame) {
+			sync_fog_of_war();
+			ui.request_redraw();
+			ui.update();
+			return;
+		}
+
+		int target_frame = std::max(0, ui.replay_st.end_frame - 1);
+		auto original_st = copy_state(ui.st);
+		auto original_action_st = copy_state(ui.action_st, ui.st, original_st);
+		auto original_apm = ui.apm;
+		auto original_replay_frame = ui.replay_frame;
+		auto original_screen_pos = ui.screen_pos;
+		auto original_last_present_time = ui.last_present_time;
+		auto original_last_presented_frame = ui.last_presented_frame;
+		auto original_force_redraw = ui.force_redraw;
+		auto original_manual_camera_moved_this_frame = ui.manual_camera_moved_this_frame;
+
+		if (!saved_states.empty()) {
+			auto i = saved_states.lower_bound(target_frame);
+			if (i == saved_states.end() || i->first > target_frame) {
+				if (i != saved_states.begin()) --i;
+			}
+			if (i != saved_states.end()) {
+				auto& v = i->second;
+				ui.st = copy_state(v->st);
+				ui.action_st = copy_state(v->action_st, v->st, ui.st);
+				ui.apm = v->apm;
+			}
+		}
+		while (ui.st.current_frame < target_frame) {
+			advance_replay_once_for_visual();
+		}
+		ui.replay_frame = target_frame;
+		ui.screen_pos = original_screen_pos;
+		sync_fog_of_war();
+		ui.request_redraw();
+		ui.update();
+
+		ui.st = copy_state(original_st);
+		ui.action_st = copy_state(original_action_st, original_st, ui.st);
+		ui.apm = original_apm;
+		ui.replay_frame = original_replay_frame;
+		ui.screen_pos = original_screen_pos;
+		ui.last_present_time = original_last_present_time;
+		ui.last_presented_frame = original_last_presented_frame;
+		ui.force_redraw = original_force_redraw;
+		ui.manual_camera_moved_this_frame = original_manual_camera_moved_this_frame;
+		sync_fog_of_war();
+	}
+
 	bool is_occupied_player(int owner) const {
 		return owner >= 0 && owner < 12 && ui.st.players[owner].controller == player_t::controller_occupied;
 	}
@@ -626,9 +683,7 @@ extern "C" double ui_get_screen_pos(int axis) {
 
 extern "C" void ui_force_static_redraw() {
 	if (!m) return;
-	m->sync_fog_of_war();
-	m->ui.request_redraw();
-	m->ui.update();
+	m->redraw_terminal_replay_frame();
 }
 
 extern "C" void ui_set_screen_center(int x, int y) {
