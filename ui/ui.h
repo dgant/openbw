@@ -578,6 +578,12 @@ struct ui_functions: ui_util_functions {
 	ui_functions(game_player player) : ui_util_functions(player.st(), current_action_state, current_replay_state), player(std::move(player)) {}
 
 	std::function<void(a_vector<uint8_t>&, a_string)> load_data_file;
+	std::function<int(int)> player_color_override;
+
+	int player_color_index(int owner) const {
+		if (player_color_override) return player_color_override(owner);
+		return st.players[owner].color;
+	}
 
 	sound_types_t sound_types;
 	a_vector<a_string> sound_filenames;
@@ -1184,7 +1190,7 @@ struct ui_functions: ui_util_functions {
 		width = std::min(width, screen_width - screen_x);
 		height = std::min(height, screen_height - screen_y);
 
-		size_t color_index = st.players[sprite->owner].color;
+		size_t color_index = player_color_index(sprite->owner);
 		uint8_t color = img.player_unit_colors.at(color_index)[0];
 		if (unit_is_mineral_field(u) || unit_is(u, UnitTypes::Resource_Vespene_Geyser)) {
 			color = tileset_img.resource_minimap_color;
@@ -1380,7 +1386,7 @@ struct ui_functions: ui_util_functions {
 				draw_selection_circle(sprite, draw_selection_u, data, data_pitch);
 				draw_selection_u = nullptr;
 			}
-			draw_image(image, data, data_pitch, st.players[sprite->owner].color);
+			draw_image(image, data, data_pitch, player_color_index(sprite->owner));
 		}
 		auto should_draw_status_bars = [&](const unit_t* u) {
 			if (!u) return false;
@@ -1568,7 +1574,7 @@ struct ui_functions: ui_util_functions {
 			--i;
 			for (unit_t* u : ptr(st.player_units[i])) {
 				if (!unit_visble_on_minimap(u)) continue;
-				int color = img.player_minimap_colors.at(st.players[u->owner].color);
+				int color = img.player_minimap_colors.at(player_color_index(u->owner));
 				size_t w = u->unit_type->placement_size.x / 32u;
 				size_t h = u->unit_type->placement_size.y / 32u;
 				if (unit_is_mineral_field(u) || unit_is(u, UnitTypes::Resource_Vespene_Geyser)) {

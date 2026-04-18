@@ -90,6 +90,7 @@ struct main_t {
 	bool observer_v3_last_live_viewport_fight = false;
 	bool observer_v3_last_stale_viewport_fight_hold = false;
 	int observer_v3_last_apply_center_reason = 0;
+	int64_t observer_v3_last_jump_cooldown_ms = 0;
 	xy observer_v3_last_apply_center_input_position;
 	xy observer_v3_last_apply_center_unclamped_screen_pos;
 	size_t observer_v3_interest_cursor = 0;
@@ -98,7 +99,11 @@ struct main_t {
 	std::unordered_map<int, bool> observer_v3_ever_viewport_visible;
 	std::unordered_map<int, int> observer_v3_combat_interest_until_frame;
 
-	main_t(game_player player) : ui(std::move(player)) {}
+	main_t(game_player player) : ui(std::move(player)) {
+		ui.player_color_override = [this](int owner) {
+			return this->display_player_color(owner);
+		};
+	}
 
 	std::chrono::high_resolution_clock clock;
 	std::chrono::high_resolution_clock::time_point last_tick;
@@ -148,6 +153,7 @@ struct main_t {
 		observer_v3_last_live_viewport_fight = false;
 		observer_v3_last_stale_viewport_fight_hold = false;
 		observer_v3_last_apply_center_reason = 0;
+		observer_v3_last_jump_cooldown_ms = 0;
 		observer_v3_last_apply_center_input_position = {};
 		observer_v3_last_apply_center_unclamped_screen_pos = {};
 		observer_v3_interest_cursor = 0;
@@ -427,23 +433,8 @@ struct main_t {
 		}
 
 		sync_fog_of_war();
-		int forced_first_player = -1;
-		int forced_second_player = -1;
-		uint8_t forced_first_color = 0;
-		uint8_t forced_second_color = 0;
-		bool force_player_colors = force_red_blue_player_colors && get_forced_red_blue_players(forced_first_player, forced_second_player);
-		if (force_player_colors) {
-			forced_first_color = ui.st.players.at(forced_first_player).color;
-			forced_second_color = ui.st.players.at(forced_second_player).color;
-			ui.st.players.at(forced_first_player).color = 0;
-			ui.st.players.at(forced_second_player).color = 1;
-		}
 		ui.update();
 		if (ui.manual_camera_moved_this_frame) pause_observer_for_manual_camera();
-		if (force_player_colors) {
-			ui.st.players.at(forced_first_player).color = forced_first_color;
-			ui.st.players.at(forced_second_player).color = forced_second_color;
-		}
 		auto pre_observer_screen_pos = ui.screen_pos;
 		update_observer_camera();
 		if (ui.screen_pos != pre_observer_screen_pos) ui.force_redraw = true;
@@ -631,6 +622,13 @@ extern "C" double ui_get_screen_pos(int axis) {
 	if (!m) return 0.0;
 	if (axis == 1) return (double)m->ui.screen_pos.y;
 	return (double)m->ui.screen_pos.x;
+}
+
+extern "C" void ui_force_static_redraw() {
+	if (!m) return;
+	m->sync_fog_of_war();
+	m->ui.request_redraw();
+	m->ui.update();
 }
 
 extern "C" void ui_set_screen_center(int x, int y) {
@@ -1116,6 +1114,10 @@ std::string get_observer_debug_summary() {
 		m->observer_v3_nuke_hold_until == std::chrono::steady_clock::time_point::min()
 		? 0
 		: std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(m->observer_v3_nuke_hold_until - now).count());
+	int64_t jump_cooldown_remaining_ms =
+		m->observer_v3_jump_cooldown_until == std::chrono::steady_clock::time_point::min()
+		? 0
+		: std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(m->observer_v3_jump_cooldown_until - now).count());
 	std::ostringstream out;
 	out << "{"
 		<< "\"frame\":" << m->ui.st.current_frame << ","
@@ -1148,6 +1150,8 @@ std::string get_observer_debug_summary() {
 		<< "\"staleViewportFightHold\":" << (stale_viewport_fight_hold ? "true" : "false") << ","
 		<< "\"retainViewportFight\":" << (retain_viewport_fight ? "true" : "false") << ","
 		<< "\"jumpCooldownActive\":" << (now < m->observer_v3_jump_cooldown_until ? "true" : "false") << ","
+		<< "\"jumpCooldownRemainingMs\":" << jump_cooldown_remaining_ms << ","
+		<< "\"lastJumpCooldownMs\":" << m->observer_v3_last_jump_cooldown_ms << ","
 		<< "\"nukeState\":{"
 			<< "\"holdRemainingMs\":" << nuke_hold_remaining_ms << ","
 			<< "\"holdPositionX\":" << m->observer_v3_nuke_hold_position.x << ","

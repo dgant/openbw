@@ -303,6 +303,14 @@ inline bool main_t::observer_v3_focus_startup_interest() {
 
 inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eligible_units, std::chrono::steady_clock::time_point now, xy& direct_pan_target, double& direct_pan_score, double& best_viewport_score, bool live_viewport_fight, bool stale_viewport_fight_hold) {
 	if (now < observer_v3_jump_cooldown_until) return 0;
+	auto set_jump_cooldown = [&](double best_viewport_score_value, bool viewport_has_combat_interest, bool target_has_combat_interest) {
+		double cooldown_seconds = (!viewport_has_combat_interest && target_has_combat_interest)
+			? 2.0
+			: (5.0 + std::min(5.0, best_viewport_score_value));
+		observer_v3_last_jump_cooldown_ms = (int64_t)std::llround(cooldown_seconds * 1000.0);
+		observer_v3_jump_cooldown_until = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+			std::chrono::duration<double>(cooldown_seconds));
+	};
 	unit_t* best_unit = nullptr;
 	unit_t* best_offscreen_unit = nullptr;
 	double best_score = -1.0;
@@ -311,11 +319,13 @@ inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eli
 	double best_offscreen_score = 0.0;
 	int best_cluster_count = -1;
 	int best_offscreen_cluster_count = -1;
+	bool viewport_has_combat_interest = false;
 	for (unit_t* unit : eligible_units) {
 		double score = observer_v3_effective_interest_score(unit);
 		bool in_viewport = observer_position_in_viewport(unit->sprite->position);
 		bool has_combat_interest = observer_v3_unit_has_combat_interest(unit);
 		int cluster_count = has_combat_interest ? observer_v3_combat_cluster_count(unit, eligible_units) : 0;
+		if (in_viewport && has_combat_interest) viewport_has_combat_interest = true;
 		if (in_viewport && score > best_viewport_score) best_viewport_score = score;
 		if (!in_viewport && (
 			score > best_offscreen_score ||
@@ -341,8 +351,7 @@ inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eli
 		if (best_offscreen_unit && best_offscreen_unit->sprite && much_stronger_offscreen) {
 			observer_v3_last_apply_center_reason = 5;
 			observer_v3_apply_center(best_offscreen_unit->sprite->position, true);
-			observer_v3_jump_cooldown_until = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-				std::chrono::duration<double>(5.0 + std::min(5.0, best_viewport_score)));
+			set_jump_cooldown(best_viewport_score, viewport_has_combat_interest, observer_v3_unit_has_combat_interest(best_offscreen_unit));
 			return 2;
 		}
 		direct_pan_target = best_unit->sprite->position;
@@ -353,8 +362,7 @@ inline int main_t::observer_v3_try_jump_to_interest(const a_vector<unit_t*>& eli
 	if (stale_viewport_fight_hold && best_viewport_score >= best_offscreen_score) return 0;
 	observer_v3_last_apply_center_reason = 6;
 	observer_v3_apply_center(best_unit->sprite->position, true);
-	observer_v3_jump_cooldown_until = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-		std::chrono::duration<double>(5.0 + std::min(5.0, best_viewport_score)));
+	set_jump_cooldown(best_viewport_score, viewport_has_combat_interest, observer_v3_unit_has_combat_interest(best_unit));
 	return 2;
 }
 

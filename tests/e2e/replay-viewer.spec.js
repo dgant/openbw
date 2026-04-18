@@ -2178,6 +2178,41 @@ test("viewer toggle settings persist across reload", async ({ page }) => {
   assertCleanLogs(logs);
 });
 
+test("red-blue mode still recolors the terminal replay frame", async ({ page }) => {
+  test.setTimeout(120000);
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+  await forceClick(page, "#rv-rc-force-colors");
+  await expect(page.locator("#rv-rc-force-colors")).toHaveClass(/is-enabled/);
+  await page.evaluate(() => {
+    const endFrame = _replay_get_value(4);
+    _replay_set_value(3, endFrame);
+    _replay_set_value(0, 128);
+    _replay_set_value(1, 0);
+  });
+  await page.waitForFunction(() => _replay_get_value(2) >= _replay_get_value(4), null, { timeout: 90000 });
+  await page.waitForTimeout(250);
+
+  const before = await page.evaluate(() => ({
+    presentCount: _ui_get_present_count(),
+    dataUrl: Module.canvas.toDataURL("image/png")
+  }));
+
+  await forceClick(page, "#rv-rc-force-colors");
+  await expect(page.locator("#rv-rc-force-colors")).not.toHaveClass(/is-enabled/);
+  await page.waitForTimeout(250);
+
+  const after = await page.evaluate(() => ({
+    presentCount: _ui_get_present_count(),
+    dataUrl: Module.canvas.toDataURL("image/png")
+  }));
+  expect(after.presentCount).toBeGreaterThan(before.presentCount);
+  expect(before.dataUrl).not.toBe(after.dataUrl);
+
+  assertCleanLogs(logs);
+});
+
 test("nuclear launch viewport alert banner tracks the canvas and uses plain white text styling", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
@@ -2368,6 +2403,54 @@ test("late-game stale viewport hold does not block a much stronger offscreen fig
   expect(summary.staleViewportFightHold).toBe(true);
   expect(summary.bestOffscreen.score).toBeGreaterThan(summary.bestViewport.score);
   expect(summary.retainViewportFight).toBe(false);
+
+  assertCleanLogs(logs);
+});
+
+test("quiet viewport to combat jump uses the reduced two-second cooldown", async ({ page }) => {
+  test.setTimeout(180000);
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, nukeReplayPath, "Hannes");
+  const frame = Math.round((32 * 60 + 9) * 1000 / 42);
+  await page.evaluate((targetFrame) => {
+    _replay_set_value(3, targetFrame);
+    _replay_set_value(0, 32);
+    _replay_set_value(1, 0);
+  }, frame);
+  await page.waitForFunction((targetFrame) => _replay_get_value(2) >= targetFrame, frame, { timeout: 120000 });
+  await page.evaluate(() => {
+    _ui_set_screen_center_manual(500, 500);
+  });
+  await page.waitForTimeout(3500);
+
+  let summary = null;
+  await expect
+    .poll(
+      async () => {
+        for (let i = 0; i < 16; ++i) {
+          const value = await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()));
+          if (
+            value.frame >= frame &&
+            value.lastAction === 3 &&
+            value.actualApplyCenterReason === 6 &&
+            value.lastJumpCooldownMs === 2000 &&
+            value.jumpCooldownRemainingMs > 0 &&
+            value.jumpCooldownRemainingMs <= 2000
+          ) {
+            summary = value;
+            return true;
+          }
+          await page.waitForTimeout(250);
+        }
+        return false;
+      },
+      { timeout: 30000 }
+    )
+    .toBe(true);
+
+  expect(summary.lastJumpCooldownMs).toBe(2000);
+  expect(summary.actualApplyCenterReason).toBe(6);
 
   assertCleanLogs(logs);
 });
