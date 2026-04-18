@@ -170,13 +170,20 @@ struct main_t {
 		if (ui.screen_pos.x < 0) ui.screen_pos.x = 0;
 	}
 
+	bool should_render_force_colored_terminal_frame() const {
+		return force_red_blue_player_colors &&
+			ui.replay_st.end_frame > 0 &&
+			ui.st.current_frame == ui.replay_st.end_frame &&
+			ui.replay_frame == ui.replay_st.end_frame;
+	}
+
 	void advance_replay_once_for_visual() {
 		ui.replay_functions::next_frame();
 		for (auto& v : ui.apm) v.update(ui.st.current_frame);
 	}
 
 	void redraw_terminal_replay_frame() {
-		if (ui.replay_st.end_frame <= 0 || ui.st.current_frame != ui.replay_st.end_frame) {
+		if (!should_render_force_colored_terminal_frame()) {
 			sync_fog_of_war();
 			ui.request_redraw();
 			ui.update();
@@ -489,8 +496,8 @@ struct main_t {
 			}
 		}
 
-		sync_fog_of_war();
-		ui.update();
+		if (should_render_force_colored_terminal_frame()) redraw_terminal_replay_frame();
+		else ui.update();
 		if (ui.manual_camera_moved_this_frame) pause_observer_for_manual_camera();
 		auto pre_observer_screen_pos = ui.screen_pos;
 		update_observer_camera();

@@ -3,6 +3,7 @@ const fs = require("fs/promises");
 
 const defaultReplayName = "PurpleWave vs Monster Tau Cross CTR_41B69CB9.rep";
 const defaultReplayPath = `/workspace/replays/${defaultReplayName}`;
+const stardustReplayPath = "/workspace/replays/PurpleWave vs Stardust Destination CTR_90FB48A3.rep";
 const willyTReplayPath = "/workspace/replays/PurpleWave vs WillyT Icarus CTR_20B3F39.rep";
 const nukeReplayPath = "/workspace/replays/Hannes Bredberg vs VOID La Mancha1.1 (Nukes).rep";
 const basilReplayUrl = "https://data.basil-ladder.net/bots/Brainiac/Brainiac%20vs%20adias%20Roadrunner%20CTR_95D142E3.rep";
@@ -2185,28 +2186,40 @@ test("red-blue mode recolors the terminal replay frame as playback naturally rea
   test.setTimeout(120000);
   const logs = await createLogCollectors(page);
 
-  await loadReplay(page);
+  await loadReplay(page, stardustReplayPath);
+  await page.evaluate(() => {
+    _observer_set_value(0);
+  });
+  const lastPlayableFrame = await page.evaluate(() => _replay_get_value(4) - 1);
+  await page.evaluate((frame) => {
+    _replay_set_value(1, 1);
+    _replay_set_value(3, frame);
+  }, lastPlayableFrame);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(2)), { timeout: 30000 }).toBe(lastPlayableFrame);
   await forceClick(page, "#rv-rc-force-colors");
   await expect(page.locator("#rv-rc-force-colors")).toHaveClass(/is-enabled/);
+  await page.waitForTimeout(300);
+
+  const lastPlayableVisual = await page.evaluate(() => Module.canvas.toDataURL("image/png"));
+
   await page.evaluate(() => {
     const endFrame = _replay_get_value(4);
     _replay_set_value(3, endFrame);
     _replay_set_value(0, 128);
     _replay_set_value(1, 0);
+    if (typeof resume_viewer_main_loop === "function") {
+      resume_viewer_main_loop();
+    }
   });
+  await page.locator("#canvas").click({ position: { x: 40, y: 40 } });
   await page.waitForFunction(() => _replay_get_value(2) >= _replay_get_value(4), null, { timeout: 90000 });
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(600);
 
   const recoloredAtDone = await page.evaluate(() => ({
     presentCount: _ui_get_present_count(),
     dataUrl: Module.canvas.toDataURL("image/png")
   }));
-  await page.waitForTimeout(800);
-  const recoloredAfterIdle = await page.evaluate(() => ({
-    presentCount: _ui_get_present_count(),
-    dataUrl: Module.canvas.toDataURL("image/png")
-  }));
-  expect(recoloredAfterIdle.dataUrl).toBe(recoloredAtDone.dataUrl);
+  expect(recoloredAtDone.dataUrl).toBe(lastPlayableVisual);
 
   await forceClick(page, "#rv-rc-force-colors");
   await expect(page.locator("#rv-rc-force-colors")).not.toHaveClass(/is-enabled/);
@@ -2220,6 +2233,96 @@ test("red-blue mode recolors the terminal replay frame as playback naturally rea
   expect(recoloredAtDone.dataUrl).not.toBe(naturalColorsAfterToggle.dataUrl);
 
   assertCleanLogs(logs);
+});
+
+test("interrupted slider drags are released on blur and pointer exit", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+  const handle = page.locator("#game-slider-handle");
+  const handleBox = await handle.boundingBox();
+  if (!handleBox) {
+    throw new Error("Playback slider handle geometry is unavailable");
+  }
+
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(100);
+  await expect.poll(() => page.evaluate(() => ({
+    isDown,
+    scrubPreviewFrame,
+    dragging: !!$("#game-slider").data("dragging")
+  }))).toEqual({
+    isDown: true,
+    scrubPreviewFrame: null,
+    dragging: true
+  });
+
+  await page.evaluate(() => {
+    window.__interruptedSliderMouseupCount = 0;
+    $("body").one("mouseup.test-interrupted-slider", () => {
+      window.__interruptedSliderMouseupCount += 1;
+    });
+  });
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("blur"));
+  });
+  await expect.poll(() => page.evaluate(() => ({
+    isDown,
+    isClicked,
+    scrubPreviewFrame,
+    dragging: !!$("#game-slider").data("dragging"),
+    handleDragging: document.getElementById("game-slider-handle").classList.contains("is-dragging"),
+    syntheticMouseupCount: window.__interruptedSliderMouseupCount || 0
+  }))).toEqual({
+    isDown: false,
+    isClicked: false,
+    scrubPreviewFrame: null,
+    dragging: false,
+    handleDragging: false,
+    syntheticMouseupCount: 1
+  });
+
+  await page.mouse.up();
+  await page.evaluate(() => {
+    isDown = true;
+    isClicked = false;
+    scrubPreviewFrame = 777;
+    $("#game-slider").data("dragging", true);
+    $("#game-slider-handle").addClass("is-dragging");
+    $("#game-slider .slider-fill").addClass("is-dragging");
+    window.__interruptedSliderMouseupCount = 0;
+    $("body").one("mouseup.test-interrupted-slider", () => {
+      window.__interruptedSliderMouseupCount += 1;
+    });
+  });
+
+  await page.evaluate(() => {
+    document.dispatchEvent(new MouseEvent("mouseout", {
+      bubbles: true,
+      cancelable: true,
+      relatedTarget: null
+    }));
+  });
+  await expect.poll(() => page.evaluate(() => ({
+    isDown,
+    isClicked,
+    scrubPreviewFrame,
+    dragging: !!$("#game-slider").data("dragging"),
+    handleDragging: document.getElementById("game-slider-handle").classList.contains("is-dragging"),
+    syntheticMouseupCount: window.__interruptedSliderMouseupCount || 0
+  }))).toEqual({
+    isDown: false,
+    isClicked: false,
+    scrubPreviewFrame: null,
+    dragging: false,
+    handleDragging: false,
+    syntheticMouseupCount: 1
+  });
+
+  await page.mouse.up();
+
+  assertAllCleanLogs(logs);
 });
 
 test("minimap dragging stays responsive after playback reaches done", async ({ page }) => {
