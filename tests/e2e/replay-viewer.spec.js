@@ -1999,6 +1999,34 @@ test("embedded demo page targets the filtered iframe viewer", async ({ page }) =
   await expect(page.locator("iframe.demo-frame")).toHaveAttribute("src", "./?embedded=1&player=Purple&maxMinutes=25");
 });
 
+test("embedded mode shows replay-list loading with the replay-loading presentation", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (url, options) => {
+      if (String(url).includes("games_24h.json")) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        return new Response(JSON.stringify({ bots: [], maps: [], results: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      return originalFetch(url, options);
+    };
+  });
+
+  await page.goto("/?embedded=1&player=Purple&maxMinutes=25");
+  await expect(page.locator("#pregame-overlay")).toBeVisible();
+  await expect(page.locator("#pregame-overlay")).toHaveClass(/pregame-loading/);
+  await expect(page.locator(".pregame-dropzone")).toContainText("Loading replay list");
+  await expect(page.locator(".pregame-dropzone")).toContainText("Fetching recent BASIL replays...");
+  await expect(page.locator(".pregame-notes")).toBeHidden();
+  await expect(page.locator("#select_replay_label")).toHaveCount(0);
+
+  assertCleanLogs(logs);
+});
+
 test("embedded mode shows a skip button and loading replay screen", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
@@ -2079,6 +2107,63 @@ test("embedded mode shows a skip button and loading replay screen", async ({ pag
     )
     .toEqual([8, 8, 8, 8]);
   expect(logs.pageErrors).toEqual([]);
+});
+
+test("embedded replay advance timer is canceled when the next replay load begins", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const originalLoadNext = load_next_embedded_replay;
+    let loadNextCalls = 0;
+    load_next_embedded_replay = function() {
+      loadNextCalls += 1;
+    };
+
+    embeddedReplayConfig.enabled = true;
+    embeddedReplayState.currentGameKey = "GAME_A";
+    embeddedReplayState.pendingGameKey = null;
+    embeddedReplayState.loadingReplay = false;
+    embeddedReplayState.fetchInProgress = false;
+    embeddedReplayState.watchedKeys = {};
+    clear_embedded_advance_timer();
+
+    const scheduled = schedule_embedded_advance_for_current_replay(50);
+    begin_embedded_replay_load("GAME_B");
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    const state = {
+      scheduled,
+      loadNextCalls,
+      currentGameKey: embeddedReplayState.currentGameKey,
+      pendingGameKey: embeddedReplayState.pendingGameKey,
+      loadingReplay: embeddedReplayState.loadingReplay,
+      advanceScheduled: embeddedReplayState.advanceScheduled,
+      watchedA: !!embeddedReplayState.watchedKeys.GAME_A
+    };
+
+    load_next_embedded_replay = originalLoadNext;
+    embeddedReplayConfig.enabled = false;
+    embeddedReplayState.currentGameKey = null;
+    embeddedReplayState.pendingGameKey = null;
+    embeddedReplayState.loadingReplay = false;
+    embeddedReplayState.watchedKeys = {};
+    clear_embedded_advance_timer();
+
+    return state;
+  });
+
+  expect(result).toEqual({
+    scheduled: true,
+    loadNextCalls: 0,
+    currentGameKey: "GAME_A",
+    pendingGameKey: "GAME_B",
+    loadingReplay: true,
+    advanceScheduled: false,
+    watchedA: true
+  });
+
+  assertCleanLogs(logs);
 });
 
 test("info dock fits full-size target counts and uses dynamic single-row scaling before wrapping", async ({ page }) => {
