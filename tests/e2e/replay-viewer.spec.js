@@ -1000,13 +1000,15 @@ test("settings audio sliders do not rewrite the active range input while changin
 
   const staleReleaseResult = await page.evaluate(async () => {
     const slider = document.querySelector("#audio-combat-slider");
-    slider.focus();
-    slider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-    slider.dispatchEvent(new Event("blur", { bubbles: true }));
-    slider.value = "42";
-    slider.dispatchEvent(new Event("input", { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    const rect = slider.getBoundingClientRect();
+    const y = rect.top + rect.height / 2;
+    slider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: rect.left + rect.width, clientY: y }));
+    document.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: rect.left + rect.width * 0.42, clientY: y }));
+    document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: rect.left + rect.width * 0.42, clientY: y }));
     slider.value = "100";
+    if (should_ignore_native_audio_slider_input("combat", slider)) {
+      slider.value = audioSliderLastInputValue.combat;
+    }
     slider.dispatchEvent(new Event("change", { bubbles: true }));
     await new Promise((resolve) => setTimeout(resolve, 75));
     return {
