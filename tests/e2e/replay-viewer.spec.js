@@ -928,6 +928,93 @@ test("footer volume hover slider visibly tracks overall volume from settings", a
   assertCleanLogs(logs);
 });
 
+test("settings audio sliders do not rewrite the active range input while changing", async ({ page }) => {
+  const logs = await createLogCollectors(page, { disableAudio: false });
+
+  await page.goto("/");
+  await expect(page.locator("#rv_modal")).toBeHidden({ timeout: 30000 });
+  await page.waitForFunction(() => typeof window.open_export_settings_modal === "function");
+  await page.evaluate(() => {
+    open_export_settings_modal();
+    set_settings_modal_tab("audio");
+  });
+  await expect(page.locator('[data-settings-panel="audio"]')).toBeVisible();
+
+  const musicResult = await page.evaluate(() => {
+    const slider = document.querySelector("#audio-music-slider");
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    const writes = [];
+    Object.defineProperty(slider, "value", {
+      configurable: true,
+      get() {
+        return descriptor.get.call(this);
+      },
+      set(value) {
+        writes.push(String(value));
+        return descriptor.set.call(this, value);
+      }
+    });
+    slider.focus();
+    descriptor.set.call(slider, "61");
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    const result = {
+      writes,
+      value: slider.value,
+      label: document.querySelector("#audio-music-value")?.textContent || "",
+      stored: JSON.parse(localStorage.audioCategorySettings || "{}").music.level
+    };
+    delete slider.value;
+    return result;
+  });
+
+  expect(musicResult).toEqual({
+    writes: [],
+    value: "61",
+    label: "61%",
+    stored: 0.61
+  });
+
+  const overallResult = await page.evaluate(() => {
+    const slider = document.querySelector("#audio-overall-slider");
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    const writes = [];
+    Object.defineProperty(slider, "value", {
+      configurable: true,
+      get() {
+        return descriptor.get.call(this);
+      },
+      set(value) {
+        writes.push(String(value));
+        return descriptor.set.call(this, value);
+      }
+    });
+    slider.focus();
+    descriptor.set.call(slider, "37");
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    const result = {
+      writes,
+      value: slider.value,
+      label: document.querySelector("#audio-overall-value")?.textContent || "",
+      stored: JSON.parse(localStorage.volumeSettings || "{}"),
+      footerValue: document.querySelector("#volumeOutput")?.value || "",
+      footerAria: document.querySelector("#volume-slider-handle")?.getAttribute("aria-valuenow") || ""
+    };
+    delete slider.value;
+    return result;
+  });
+
+  expect(overallResult).toEqual({
+    writes: [],
+    value: "37",
+    label: "37%",
+    stored: { level: 0.37, muted: false },
+    footerValue: "37",
+    footerAria: "37"
+  });
+
+  assertCleanLogs(logs);
+});
+
 test("zoom out clamps to a safe render size on large viewports", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
@@ -1401,6 +1488,9 @@ test("export button records a WebM download flow", async ({ page }) => {
 
   const logs = await createLogCollectors(page);
   await loadReplay(page);
+  await expect
+    .poll(() => page.evaluate(() => current_replay_player_names()))
+    .toEqual(["PurpleWave", "Monster"]);
 
   await forceClick(page, "#rv-rc-export-settings");
   await expect(page.locator("#export_settings")).toBeVisible();
