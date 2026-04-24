@@ -127,6 +127,30 @@ async function getFooterVolumeHandleTop(page) {
   });
 }
 
+async function waitForFooterVolumeHandleTop(page, expectedValue) {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => ({
+          output: document.querySelector("#volumeOutput")?.value || "",
+          aria: document.querySelector("#volume-slider-handle")?.getAttribute("aria-valuenow") || "",
+          visible: window.getComputedStyle(document.querySelector("#volume-slider-wrapper")).display !== "none"
+        })),
+      { timeout: 5000 }
+    )
+    .toEqual({ output: String(expectedValue), aria: String(expectedValue), visible: true });
+  await expect
+    .poll(
+      async () => {
+        const metrics = await getFooterVolumeHandleTop(page);
+        return expectedValue < 50 ? metrics.handleTop : -metrics.handleTop;
+      },
+      { timeout: 5000 }
+    )
+    .toBeGreaterThan(expectedValue < 50 ? 50 : -50);
+  return getFooterVolumeHandleTop(page);
+}
+
 async function dragPlaybackScrubber(page, fraction) {
   const slider = page.locator("#game-slider");
   const handle = page.locator("#game-slider-handle");
@@ -909,7 +933,7 @@ test("footer volume hover slider visibly tracks overall volume from settings", a
   await forceClick(page, "#export_settings .close-button");
   await page.hover("#rv-rc-sound");
   await expect(page.locator("#volume-slider-wrapper")).toBeVisible();
-  const lowVolume = await getFooterVolumeHandleTop(page);
+  const lowVolume = await waitForFooterVolumeHandleTop(page, 25);
 
   await forceClick(page, "#rv-rc-export-settings");
   await forceClick(page, "#settings-tab-audio");
@@ -918,7 +942,7 @@ test("footer volume hover slider visibly tracks overall volume from settings", a
   await forceClick(page, "#export_settings .close-button");
   await page.hover("#rv-rc-sound");
   await expect(page.locator("#volume-slider-wrapper")).toBeVisible();
-  const highVolume = await getFooterVolumeHandleTop(page);
+  const highVolume = await waitForFooterVolumeHandleTop(page, 75);
 
   expect(lowVolume.sliderHeight).toBeGreaterThan(0);
   expect(lowVolume.handleTop - highVolume.handleTop).toBeGreaterThan(20);
@@ -978,8 +1002,10 @@ test("settings audio sliders do not rewrite the active range input while changin
     const slider = document.querySelector("#audio-combat-slider");
     slider.focus();
     slider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    slider.dispatchEvent(new Event("blur", { bubbles: true }));
     slider.value = "42";
     slider.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 200));
     slider.value = "100";
     slider.dispatchEvent(new Event("change", { bubbles: true }));
     await new Promise((resolve) => setTimeout(resolve, 75));
