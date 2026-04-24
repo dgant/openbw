@@ -974,6 +974,28 @@ test("settings audio sliders do not rewrite the active range input while changin
     stored: 0.61
   });
 
+  const staleReleaseResult = await page.evaluate(async () => {
+    const slider = document.querySelector("#audio-combat-slider");
+    slider.focus();
+    slider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    slider.value = "42";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    slider.value = "100";
+    slider.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    return {
+      value: slider.value,
+      label: document.querySelector("#audio-combat-value")?.textContent || "",
+      stored: JSON.parse(localStorage.audioCategorySettings || "{}").combat.level
+    };
+  });
+
+  expect(staleReleaseResult).toEqual({
+    value: "42",
+    label: "42%",
+    stored: 0.42
+  });
+
   const overallResult = await page.evaluate(() => {
     const slider = document.querySelector("#audio-overall-slider");
     const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
