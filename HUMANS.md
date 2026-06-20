@@ -14,6 +14,12 @@ Install the browser test dependencies:
 npm install
 ```
 
+Run focused source regression tests:
+
+```bash
+npm run test:source
+```
+
 Run the replay-viewer browser regression test:
 
 ```bash
