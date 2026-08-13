@@ -21681,6 +21681,10 @@ struct game_load_functions : state_functions {
 					make_unit_hallucination(u);
 				}
 
+				if (valid_flags & 0x10 && flags & 0x10) {
+					u_set_status_flag(u, unit_t::status_flag_invincible);
+				}
+
 				if (unit_is(u, UnitTypes::Zerg_Broodling)) {
 					set_remove_timer(u);
 				}
