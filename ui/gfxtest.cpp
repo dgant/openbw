@@ -496,6 +496,7 @@ struct main_t {
 			}
 		}
 
+		sync_fog_of_war();
 		if (should_render_force_colored_terminal_frame()) redraw_terminal_replay_frame();
 		else ui.update();
 		if (ui.manual_camera_moved_this_frame) pause_observer_for_manual_camera();
@@ -785,6 +786,11 @@ extern "C" void observer_set_value(double value) {
 extern "C" double fog_of_war_get_value() {
 	if (!m) return 0.0;
 	return m->fog_of_war_enabled ? 1.0 : 0.0;
+}
+
+extern "C" double fog_of_war_vision_get_value() {
+	if (!m) return 0.0;
+	return (double)m->ui.vision;
 }
 
 extern "C" void fog_of_war_set_value(double value) {
@@ -1361,6 +1367,8 @@ extern "C" void load_replay(const uint8_t* data, size_t len) {
 	m->reset();
 	m->ui.load_replay_data(data, len);
 	m->ui.set_image_data();
+	m->sync_fog_of_war();
+	m->ui.request_redraw();
 	any_replay_loaded = true;
 }
 

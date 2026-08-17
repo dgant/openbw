@@ -801,6 +801,71 @@ test("basic HUD toggles and hotkeys work during replay playback", async ({ page 
   assertCleanLogs(logs);
 });
 
+test("loading a new replay while paused publishes its frame-zero status before playback", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+  await page.evaluate(() => _replay_set_value(1, 1));
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(1);
+  await page.evaluate(() => {
+    const originalStartReplay = start_replay;
+    window.__frameZeroStatusSnapshot = null;
+    start_replay = function(buffer, length) {
+      originalStartReplay(buffer, length);
+      window.__frameZeroStatusSnapshot = {
+        currentFrame: _replay_get_value(2),
+        paused: _replay_get_value(1),
+        expectedMap: UTF8ToString(_replay_get_value(5)),
+        displayedMap: document.getElementById("map2").textContent,
+        expectedPlayers: players.map((player) => ({
+          nick: UTF8ToString(_player_get_value(player, C_NICK)),
+          minerals: String(_player_get_value(player, C_CURRENT_MINERALS))
+        })),
+        displayedPlayers: players.map((player, index) => ({
+          nick: document.getElementById(`nick${index + 1}`).textContent,
+          minerals: document.getElementById(`minerals${index + 1}`).textContent
+        }))
+      };
+    };
+  });
+
+  await page.setInputFiles("#select_rep_file", stardustReplayPath);
+  await page.waitForFunction(() => window.__frameZeroStatusSnapshot !== null);
+  const snapshot = await page.evaluate(() => window.__frameZeroStatusSnapshot);
+
+  expect(snapshot.currentFrame).toBe(0);
+  expect(snapshot.paused).toBe(1);
+  expect(snapshot.displayedMap).toBe(snapshot.expectedMap);
+  expect(snapshot.displayedPlayers).toEqual(snapshot.expectedPlayers);
+  assertCleanLogs(logs);
+});
+
+test("dragging in a new replay replaces the paused canvas immediately", async ({ page }) => {
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page);
+  await page.evaluate(() => _replay_set_value(1, 1));
+  await expect.poll(() => page.evaluate(() => _replay_get_value(1))).toBe(1);
+  await page.waitForTimeout(150);
+  const previousCanvas = await page.evaluate(() => Module.canvas.toDataURL("image/png"));
+  await page.evaluate(() => {
+    const originalStartReplay = start_replay;
+    window.__canvasImmediatelyAfterReplayStart = null;
+    start_replay = function(buffer, length) {
+      originalStartReplay(buffer, length);
+      window.__canvasImmediatelyAfterReplayStart = Module.canvas.toDataURL("image/png");
+    };
+  });
+
+  const drop = await createReplayDrop(page, stardustReplayPath);
+  await page.dispatchEvent("body", "drop", { dataTransfer: drop });
+  await page.waitForFunction(() => window.__canvasImmediatelyAfterReplayStart !== null);
+  const nextCanvas = await page.evaluate(() => window.__canvasImmediatelyAfterReplayStart);
+
+  expect(nextCanvas).not.toBe(previousCanvas);
+  assertCleanLogs(logs);
+});
+
 test("updated playback hotkeys use A/D, SPACE, Pause, and Z/X/C/V while removing old aliases", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
@@ -2457,6 +2522,51 @@ test("red-blue mode recolors the terminal replay frame as playback naturally rea
   expect(naturalColorsAfterToggle.presentCount).toBeGreaterThan(recoloredAtDone.presentCount);
   expect(recoloredAtDone.dataUrl).not.toBe(naturalColorsAfterToggle.dataUrl);
 
+  assertCleanLogs(logs);
+});
+
+test("rewinding from replay end restores every enabled player's actual vision", async ({ page }) => {
+  test.setTimeout(120000);
+  const logs = await createLogCollectors(page);
+
+  await loadReplay(page, stardustReplayPath);
+  const initialPlayers = await page.evaluate(() => players.slice());
+  await page.evaluate(() => {
+    _observer_set_value(0);
+    _replay_set_value(3, _replay_get_value(4));
+    _replay_set_value(0, 128);
+    _replay_set_value(1, 0);
+    resume_viewer_main_loop();
+  });
+  await page.waitForFunction(() => _replay_get_value(2) >= _replay_get_value(4), null, { timeout: 90000 });
+  await page.waitForTimeout(500);
+
+  const inactivePlayer = await page.evaluate((replayPlayers) =>
+    replayPlayers.find((player) => _player_get_value(player, C_PLAYER_ACTIVE) === 0), initialPlayers);
+  expect(inactivePlayer).not.toBeUndefined();
+
+  await page.evaluate(() => {
+    const rewindFrame = Math.max(0, _replay_get_value(4) - Math.round(60 * 1000 / 42));
+    _replay_set_value(1, 1);
+    _replay_set_value(3, rewindFrame);
+    resume_viewer_main_loop();
+  });
+  await page.waitForFunction(() => _replay_get_value(2) === _replay_get_value(3), null, { timeout: 30000 });
+
+  const visionState = await page.evaluate((player) => {
+    const playerIndex = players.indexOf(player);
+    return {
+      active: _player_get_value(player, C_PLAYER_ACTIVE),
+      selected: _fog_of_war_player_get_value(player),
+      actualMask: _fog_of_war_vision_get_value(),
+      indicatorEnabled: document.getElementById(`vision${playerIndex + 1}`).classList.contains("is-enabled")
+    };
+  }, inactivePlayer);
+
+  expect(visionState.active).toBe(1);
+  expect(visionState.selected).toBe(1);
+  expect(visionState.indicatorEnabled).toBe(true);
+  expect(visionState.actualMask & (1 << inactivePlayer)).not.toBe(0);
   assertCleanLogs(logs);
 });
 
