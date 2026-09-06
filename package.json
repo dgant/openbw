@@ -2,7 +2,7 @@
   "name": "openbw-dev",
   "private": true,
   "scripts": {
-    "test:source": "node tests/source/can-place-building-creep-visibility.test.js",
+    "test:source": "node tests/source/can-place-building-creep-visibility.test.js && node --test tests/source/default-build.test.js",
     "test:e2e": "playwright test"
   },
   "devDependencies": {

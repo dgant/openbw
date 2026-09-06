@@ -2,7 +2,7 @@
 
 ## Local development
 
-Build the browser runtime from this repository into the replay viewer wrapper:
+Build the browser runtime and standalone desktop packages together:
 
 ```bash
 ./scripts/build_replay_viewer.sh
@@ -40,6 +40,9 @@ http://localhost:8080/
 
 ## Notes
 
+- The default build also packages those same web assets into `../openbw-replay-viewer/desktop/dist/replay-viewer-desktop/` and verifies the bundled files match `docs/`. A desktop packaging or verification failure fails the build.
+- On first use, the build installs the locked desktop dependencies and downloads the configured Neutralino runtime if missing.
+- On Windows, run `../openbw-replay-viewer/desktop/scripts/register-file-association.ps1` once to register the stable output path for `.rep`. Keep the executable and `resources.neu` together.
 - The current local build writes `openbw.js` and `openbw.wasm` into `../openbw-replay-viewer/docs/v1.4/`.
 - The wrapper HTML/JS currently still lives in `../openbw-replay-viewer/docs/`.
 - Example replays are in `../replays/`.
