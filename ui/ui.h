@@ -581,6 +581,9 @@ struct ui_functions: ui_util_functions {
 	std::function<int(int)> player_color_override;
 
 	int player_color_index(int owner) const {
+		// Map scenery can have non-player owners (e.g. 12). Use neutral's palette
+		// before invoking overrides, which also require a valid player slot.
+		if (owner < 0 || owner >= (int)st.players.size()) owner = 11;
 		if (player_color_override) return player_color_override(owner);
 		return st.players[owner].color;
 	}

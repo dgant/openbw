@@ -20,6 +20,9 @@ Run focused source regression tests:
 npm run test:source
 ```
 
+Run these tests inside the development container; the scenery-color test compiles
+a native renderer test using the container's C++ compiler and SDL2 headers.
+
 Run the replay-viewer browser regression test:
 
 ```bash
@@ -37,6 +40,17 @@ The viewer will be available on:
 ```text
 http://localhost:8080/
 ```
+
+With that server running, test the Roadkill white-canvas regression specifically:
+
+```bash
+npx playwright test tests/e2e/scenery-owner.spec.js
+```
+
+This loads the committed replay fixture, pans to scenery at (2624, 912), checks
+redraws with normal and forced player colors, and verifies playback continues
+without browser errors or warnings. It saves `test-results/roadkill-scenery-render.png`
+for visual inspection.
 
 ## Notes
 

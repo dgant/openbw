@@ -9,3 +9,5 @@
 - Loading replay data changes the engine synchronously, but a paused or idle browser loop may not repaint or refresh the footer before the load callback returns. Publish frame-zero UI state and force one static redraw as part of the load transaction.
 
 - Updating the web runtime does not update Neutralino desktop resources automatically. Keep desktop packaging in the default build and verify bundled assets against the local web tree. Windows file associations must point to that maintained output, not a duplicate release folder.
+
+- Map scenery can carry an owner outside player slots 0–11 (Roadkill has owner 12). Normalize the palette lookup to neutral before calling player-color overrides, without changing simulation ownership. A white canvas can be a C++ `array::at` exception during rendering, not damaged MPQs. Regressions must pan to the offending sprite: another initial camera position can hide the bug.

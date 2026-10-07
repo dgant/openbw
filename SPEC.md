@@ -11,3 +11,11 @@ The Windows `.rep` association points to
 The executable and `resources.neu` must remain together. Subsequent builds replace
 that output in place. There must be no independently maintained desktop copy in
 the workspace's former `replay-viewer-desktop` directory.
+
+## Scenery rendering
+
+Map decorations with owners outside player slots 0–11 must render using neutral
+player 11's palette without stopping playback. Normalize only the rendering
+color lookup, before applying player-color overrides; preserve the original
+simulation owner. Valid player colors and two-player red/blue overrides must
+remain unchanged.
