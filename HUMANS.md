@@ -65,6 +65,18 @@ for the seek on a busy machine. Startup tests hold the first URL-loaded replay
 at frame zero and check visible player names, map, and resources at two widths.
 Screenshots are saved under `test-results/`.
 
+Test starting-camera positioning with automatic camera on/off, saved zoom,
+and replacement of a paused replay:
+
+```bash
+npx playwright test tests/e2e/replay-start-camera.spec.js
+```
+
+This uses the workspace's Tau Cross example replay and the committed Gladiator
+fixture, checks their known starting coordinates and painted canvas pixels at
+frame zero (including after deferred zoom restoration), and saves
+`test-results/start-camera-*.png` for visual inspection.
+
 ## Notes
 
 - The default build also packages those same web assets into `../openbw-replay-viewer/desktop/dist/replay-viewer-desktop/` and verifies the bundled files match `docs/`. A desktop packaging or verification failure fails the build.

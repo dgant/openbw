@@ -1299,6 +1299,10 @@ extern "C" double player_get_value(int player, int index) {
 		return (double)(int)m->ui.st.players.at(player).race;
 	case 14:
 		return (double)m->ui.apm.at(player).current_apm;
+	case 15:
+		return m->ui.game_st.start_locations.at(player).x;
+	case 16:
+		return m->ui.game_st.start_locations.at(player).y;
 	default:
 		return 0;
 	}

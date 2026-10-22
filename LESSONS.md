@@ -15,3 +15,16 @@
 - Player controller state is not replay identity: elimination changes occupied slots to user-left and transfers units to neutral, while sprites retain their visual owners. Capture the initial participant roster for color assignment and use sprite ownership for minimap colors too.
 - Do not repair terminal-frame colors by temporarily restoring an earlier simulation snapshot. The old path also processed input, then restored the previous camera position, producing snap-back even with the observer paused. Render the real final state with stable display identities. Tests should check that final state's colors and input response, not require a pixel-identical copy of the preceding frame.
 - For initial-status regressions, freeze the first URL load at frame zero and assert both field content and visibility. In the October 2026 report, the current first-load path and actual PurpleBench URL passed this check; the existing replacement-while-paused test alone did not establish that.
+- Startup camera tests need known replay starting coordinates away from the
+  origin, and must freeze playback so automatic observation cannot mask a
+  missing initial position. Reapply the starting center after deferred saved
+  zoom restoration: preserving an already map-clamped center can offset the
+  final zoomed view.
+- Camera coordinates alone do not prove a visible startup frame. Deferred zoom
+  restoration resizes and clears the canvas after the first static redraw; a
+  paused replay needs another static redraw after that resize. Check rendered
+  pixels and inspect screenshots, not just camera state.
+- Public ladder replay URLs can expire (the Brainiac/Roadrunner startup fixture
+  returned HTTP 404). Intercept the external download with stable local replay
+  bytes for URL-loading regressions; do not confuse archive availability with
+  a viewer startup failure.

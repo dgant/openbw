@@ -219,6 +219,12 @@ test("boots with bundled MPQs and starts a replay from drag and drop", async ({ 
 test("remote replay loaded via rep query keeps advancing after startup", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
+  // Public ladder archives expire; exercise the URL-loading path with stable bytes.
+  await page.route(basilReplayUrl, route => route.fulfill({
+    path: defaultReplayPath,
+    contentType: "application/octet-stream",
+    headers: { "access-control-allow-origin": "*" }
+  }));
   await loadRemoteReplay(page, basilReplayUrl);
   await expectStartupPlaybackToAdvance(page);
   assertAllCleanLogs(logs);

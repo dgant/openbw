@@ -22,6 +22,10 @@ remain unchanged.
 
 ## Replay lifecycle
 
+- Each replay load centers the camera on the first participant's starting
+  location (player-slot order), clamped to map bounds, before playback advances.
+  This applies with automatic camera on or off, after restoring saved zoom,
+  and when replacing a paused replay. Later manual movement remains unaffected.
 - Red/blue mode uses the original replay participants in player-slot order,
   not the players still active at the current frame. The assignment survives
   elimination, replay completion, and rewind, and resets when loading another
