@@ -66,6 +66,7 @@ struct main_t {
 	uint32_t fog_of_war_player_mask = 0;
 	bool fog_of_war_player_mask_custom = false;
 	bool force_red_blue_player_colors = false;
+	std::array<bool, 12> replay_players{};
 	bool observer_initialized = false;
 	int observer_last_frame_seen = -1;
 	xy observer_current_camera_position;
@@ -125,6 +126,7 @@ struct main_t {
 		fog_of_war_player_mask = 0;
 		fog_of_war_player_mask_custom = false;
 		force_red_blue_player_colors = false;
+		replay_players.fill(false);
 		reset_observer_runtime_state();
 	}
 
@@ -170,72 +172,13 @@ struct main_t {
 		if (ui.screen_pos.x < 0) ui.screen_pos.x = 0;
 	}
 
-	bool should_render_force_colored_terminal_frame() const {
-		return force_red_blue_player_colors &&
-			ui.replay_st.end_frame > 0 &&
-			ui.st.current_frame == ui.replay_st.end_frame &&
-			ui.replay_frame == ui.replay_st.end_frame;
-	}
-
-	void advance_replay_once_for_visual() {
-		ui.replay_functions::next_frame();
-		for (auto& v : ui.apm) v.update(ui.st.current_frame);
-	}
-
-	void redraw_terminal_replay_frame() {
-		if (!should_render_force_colored_terminal_frame()) {
-			sync_fog_of_war();
-			ui.request_redraw();
-			ui.update();
-			return;
-		}
-
-		int target_frame = std::max(0, ui.replay_st.end_frame - 1);
-		auto original_st = copy_state(ui.st);
-		auto original_action_st = copy_state(ui.action_st, ui.st, original_st);
-		auto original_apm = ui.apm;
-		auto original_replay_frame = ui.replay_frame;
-		auto original_screen_pos = ui.screen_pos;
-		auto original_last_present_time = ui.last_present_time;
-		auto original_last_presented_frame = ui.last_presented_frame;
-		auto original_force_redraw = ui.force_redraw;
-		auto original_manual_camera_moved_this_frame = ui.manual_camera_moved_this_frame;
-
-		if (!saved_states.empty()) {
-			auto i = saved_states.lower_bound(target_frame);
-			if (i == saved_states.end() || i->first > target_frame) {
-				if (i != saved_states.begin()) --i;
-			}
-			if (i != saved_states.end()) {
-				auto& v = i->second;
-				ui.st = copy_state(v->st);
-				ui.action_st = copy_state(v->action_st, v->st, ui.st);
-				ui.apm = v->apm;
-			}
-		}
-		while (ui.st.current_frame < target_frame) {
-			advance_replay_once_for_visual();
-		}
-		ui.replay_frame = target_frame;
-		ui.screen_pos = original_screen_pos;
-		sync_fog_of_war();
-		ui.request_redraw();
-		ui.update();
-
-		ui.st = copy_state(original_st);
-		ui.action_st = copy_state(original_action_st, original_st, ui.st);
-		ui.apm = original_apm;
-		ui.replay_frame = original_replay_frame;
-		ui.screen_pos = original_screen_pos;
-		ui.last_present_time = original_last_present_time;
-		ui.last_presented_frame = original_last_presented_frame;
-		ui.force_redraw = original_force_redraw;
-		ui.manual_camera_moved_this_frame = original_manual_camera_moved_this_frame;
-		sync_fog_of_war();
-	}
-
 	bool is_occupied_player(int owner) const {
 		return owner >= 0 && owner < 12 && ui.st.players[owner].controller == player_t::controller_occupied;
+	}
+
+	void capture_replay_players() {
+		// Display identities outlive player elimination and replay seeks.
+		for (int owner = 0; owner != 12; ++owner) replay_players[owner] = is_occupied_player(owner);
 	}
 
 	uint32_t fog_of_war_vision_mask() const {
@@ -258,7 +201,7 @@ struct main_t {
 		first_player = -1;
 		second_player = -1;
 		for (int owner = 0; owner != 12; ++owner) {
-			if (!is_occupied_player(owner)) continue;
+			if (!replay_players[owner]) continue;
 			if (first_player == -1) first_player = owner;
 			else if (second_player == -1) second_player = owner;
 			else return false;
@@ -267,7 +210,6 @@ struct main_t {
 	}
 
 	int display_player_color(int player) const {
-		if (!is_occupied_player(player)) return ui.st.players.at(player).color;
 		if (!force_red_blue_player_colors) return ui.st.players.at(player).color;
 		int first_player = -1;
 		int second_player = -1;
@@ -497,8 +439,7 @@ struct main_t {
 		}
 
 		sync_fog_of_war();
-		if (should_render_force_colored_terminal_frame()) redraw_terminal_replay_frame();
-		else ui.update();
+		ui.update();
 		if (ui.manual_camera_moved_this_frame) pause_observer_for_manual_camera();
 		auto pre_observer_screen_pos = ui.screen_pos;
 		update_observer_camera();
@@ -691,7 +632,9 @@ extern "C" double ui_get_screen_pos(int axis) {
 
 extern "C" void ui_force_static_redraw() {
 	if (!m) return;
-	m->redraw_terminal_replay_frame();
+	m->sync_fog_of_war();
+	m->ui.request_redraw();
+	m->ui.update();
 }
 
 extern "C" void ui_set_screen_center(int x, int y) {
@@ -1366,6 +1309,7 @@ bool any_replay_loaded = false;
 extern "C" void load_replay(const uint8_t* data, size_t len) {
 	m->reset();
 	m->ui.load_replay_data(data, len);
+	m->capture_replay_players();
 	m->ui.set_image_data();
 	m->sync_fog_of_war();
 	m->ui.request_redraw();
@@ -1411,6 +1355,7 @@ int main() {
 
 #ifndef EMSCRIPTEN
 	ui.load_replay_file("maps/p49.rep");
+	m.capture_replay_players();
 #endif
 
 	auto& wnd = ui.wnd;

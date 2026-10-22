@@ -19,3 +19,21 @@ player 11's palette without stopping playback. Normalize only the rendering
 color lookup, before applying player-color overrides; preserve the original
 simulation owner. Valid player colors and two-player red/blue overrides must
 remain unchanged.
+
+## Replay lifecycle
+
+- Red/blue mode uses the original replay participants in player-slot order,
+  not the players still active at the current frame. The assignment survives
+  elimination, replay completion, and rewind, and resets when loading another
+  replay. A game starting with more than two players never becomes eligible
+  merely because players leave.
+- Unit sprites and minimap markers use the same visual owner for their palette,
+  including units neutralized when a player leaves. Simulation ownership is
+  unchanged.
+- The actual final simulation frame is rendered directly. Redrawing must not
+  rewind the simulation, discard camera input, or restore an old camera position.
+  Manual camera movement remains available while paused or finished, with
+  automatic camera enabled or disabled and either player-color mode selected.
+- A newly loaded replay publishes its map, names, and initial statistics before
+  playback advances. Frame-zero status must be visible at desktop viewport sizes
+  without requiring a play action; ordinary responsive column hiding still applies.

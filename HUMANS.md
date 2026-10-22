@@ -52,6 +52,19 @@ redraws with normal and forced player colors, and verifies playback continues
 without browser errors or warnings. It saves `test-results/roadkill-scenery-render.png`
 for visual inspection.
 
+Test end-of-game colors, manual camera movement, and initial URL-loaded status:
+
+```bash
+npx playwright test tests/e2e/replay-lifecycle.spec.js
+```
+
+The elimination test seeks through the committed 23-minute replay once, then
+checks both color modes, visible minimap colors, camera stability after the
+three-second manual override expires, and rewind. Allow up to three minutes
+for the seek on a busy machine. Startup tests hold the first URL-loaded replay
+at frame zero and check visible player names, map, and resources at two widths.
+Screenshots are saved under `test-results/`.
+
 ## Notes
 
 - The default build also packages those same web assets into `../openbw-replay-viewer/desktop/dist/replay-viewer-desktop/` and verifies the bundled files match `docs/`. A desktop packaging or verification failure fails the build.

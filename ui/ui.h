@@ -1577,7 +1577,8 @@ struct ui_functions: ui_util_functions {
 			--i;
 			for (unit_t* u : ptr(st.player_units[i])) {
 				if (!unit_visble_on_minimap(u)) continue;
-				int color = img.player_minimap_colors.at(player_color_index(u->owner));
+				// Neutralized units retain their visual owner's color after defeat.
+				int color = img.player_minimap_colors.at(player_color_index(u->sprite->owner));
 				size_t w = u->unit_type->placement_size.x / 32u;
 				size_t h = u->unit_type->placement_size.y / 32u;
 				if (unit_is_mineral_field(u) || unit_is(u, UnitTypes::Resource_Vespene_Geyser)) {

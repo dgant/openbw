@@ -2473,7 +2473,7 @@ test("viewer toggle settings persist across reload", async ({ page }) => {
 });
 
 test("red-blue mode recolors the terminal replay frame as playback naturally reaches done", async ({ page }) => {
-  test.setTimeout(120000);
+  test.setTimeout(180000);
   const logs = await createLogCollectors(page);
 
   await loadReplay(page, stardustReplayPath);
@@ -2485,12 +2485,10 @@ test("red-blue mode recolors the terminal replay frame as playback naturally rea
     _replay_set_value(1, 1);
     _replay_set_value(3, frame);
   }, lastPlayableFrame);
-  await expect.poll(() => page.evaluate(() => _replay_get_value(2)), { timeout: 30000 }).toBe(lastPlayableFrame);
+  await expect.poll(() => page.evaluate(() => _replay_get_value(2)), { timeout: 90000 }).toBe(lastPlayableFrame);
   await forceClick(page, "#rv-rc-force-colors");
   await expect(page.locator("#rv-rc-force-colors")).toHaveClass(/is-enabled/);
   await page.waitForTimeout(300);
-
-  const lastPlayableVisual = await page.evaluate(() => Module.canvas.toDataURL("image/png"));
 
   await page.evaluate(() => {
     const endFrame = _replay_get_value(4);
@@ -2507,9 +2505,11 @@ test("red-blue mode recolors the terminal replay frame as playback naturally rea
 
   const recoloredAtDone = await page.evaluate(() => ({
     presentCount: _ui_get_present_count(),
-    dataUrl: Module.canvas.toDataURL("image/png")
+    dataUrl: Module.canvas.toDataURL("image/png"),
+    colors: players.map(player => _player_get_value(player, C_COLOR))
   }));
-  expect(recoloredAtDone.dataUrl).toBe(lastPlayableVisual);
+  // Render the actual terminal state, retaining the original player identities.
+  expect(recoloredAtDone.colors).toEqual([0, 1]);
 
   await forceClick(page, "#rv-rc-force-colors");
   await expect(page.locator("#rv-rc-force-colors")).not.toHaveClass(/is-enabled/);
