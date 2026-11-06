@@ -557,7 +557,6 @@ struct js_file_reader {
 		if (filename == "StarDat.mpq") index = 0;
 		else if (filename == "BrooDat.mpq") index = 1;
 		else if (filename == "Patch_rt.mpq") index = 2;
-		else if (filename == "RemasteredTerrain.mpq") index = 3;
 		else ui::xcept("js_file_reader: unknown filename '%s'", filename);
 		this->filename = std::move(filename);
 	}
@@ -1345,9 +1344,6 @@ int main() {
 	auto load_data_file = data_loading::data_files_directory("");
 #endif
 
-	#ifdef OPENBW_REMASTERED_RUNTIME
-	load_data_file.mpqs.emplace_front("RemasteredTerrain.mpq");
-	#endif
 	game_player player(load_data_file);
 
 	main_t m(std::move(player));

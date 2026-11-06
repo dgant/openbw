@@ -6,23 +6,11 @@
   Check the previously successful workflow and `gh auth status` before concluding
   the task needs new credentials. Keep credential values out of logs and source.
 
-- Remastered rules belong to each replay's simulation state, not global pool
-  constants: legacy loads and rewind snapshots must restore their own limits,
-  unit-tag layout and order-allocation rules. Modern command IDs must also map
-  to classic IDs for existing UI APM/acknowledgement hooks.
-- Recent Remastered player-name sections can contain 12 x 96 bytes, not only
-  the 12 x 64 layout in older reference converters. Decode the actual length.
-- A failed neutral-egg placement on a Remastered map can mean the wrong terrain
-  data, not a new placement rule. The Octagon/Backrooms workaround was removed:
-  the extended CV5/VF4 tables allow normal placement and correct pathfinding.
-- Backrooms diverged at frame 2233 with classic terrain even under the public
-  alexpineda fork. The current engine with sagi.gg's extended terrain matched
-  every comparable unit at four independent checkpoints through frame 14035.
-  Compare both engine and assets. Matching loaders alone is insufficient.
-- Remastered graphics use VX4EX, with 32-bit rather than 16-bit mini-tile
-  references. Updating only simulation terrain would leave the renderer wrong.
-- Completing a replay and replaying a snapshot deterministically establish
-  loader and seek stability, not agreement with the original StarCraft game.
+- The 2026-11-06 Remastered integration was reverted because it imported
+  LGPLv3-derived code without approval. Check source provenance and licensing
+  before importing code, including C++ patches distributed by a Go project.
+  Use the requested direct C++ OpenBW fork and narrow upstream changes instead
+  of adding another language or adapting an independently licensed port.
 
 - The `basil-ladder/openbw` fog-of-war branch merges cleanly into the current `openbw` master.
 - The historical replay-viewer Emscripten build no longer works with the original `1.38.13` SDK tag because that exact target is no longer in the current `emsdk` manifest.

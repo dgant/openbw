@@ -5,7 +5,6 @@
 #include "data_loading.h"
 #include "korean.h"
 #include "bwgame.h"
-#include <zlib.h>
 
 namespace bwgame {
 
@@ -36,49 +35,18 @@ template<typename base_reader_T, bool default_little_endian = true>
 struct replay_file_reader {
 	crc32_t crc32;
 	base_reader_T& r;
-	size_t file_end = 0;
-	bool remastered = false;
-	bool modern121 = false;
 	replay_file_reader(base_reader_T& r) : r(r) {
-		file_end = r.size();
-		auto pos = r.tell();
-		if (file_end - pos >= 30) {
-			std::array<uint8_t, 30> header;
-			r.get_bytes(header.data(), header.size());
-			r.seek(pos);
-			modern121 = value_at<uint32_t, true>(header.data() + 12) == 0x53526573;
-			remastered = modern121 || (header[28] == 0x78 && (header[28] * 256 + header[29]) % 31 == 0);
-		}
 	}
 
-	size_t get_bytes(uint8_t* output, size_t output_size, bool exact = true) {
-		if (remastered && output_size == 0) return 0;
+	void get_bytes(uint8_t* output, size_t output_size) {
 		uint32_t crc32_sum = r.template get<uint32_t>();
 		size_t segments = r.template get<uint32_t>();
-		if (segments > left() / 4) error("replay_file_reader: invalid segment count");
 		
 		a_vector<uint8_t> compressed_data;
 
 		size_t output_pos = 0;
 		for (size_t i = 0; i != segments; ++i) {
 			size_t segment_input_size = r.template get<uint32_t>();
-			if (segment_input_size > left()) error("replay_file_reader: truncated segment");
-			if (remastered) {
-				compressed_data.resize(segment_input_size);
-				r.get_bytes(compressed_data.data(), segment_input_size);
-				if (segment_input_size > 4 && compressed_data[0] == 0x78 &&
-					(compressed_data[0] * 256 + compressed_data[1]) % 31 == 0) {
-					uLongf length = output_size - output_pos;
-					if (uncompress(output + output_pos, &length, compressed_data.data(), segment_input_size) != Z_OK)
-						error("replay_file_reader: invalid zlib segment");
-					output_pos += length;
-				} else {
-					if (segment_input_size > output_size - output_pos) error("replay_file_reader: output buffer too small");
-					memcpy(output + output_pos, compressed_data.data(), segment_input_size);
-					output_pos += segment_input_size;
-				}
-				continue;
-			}
 			
 			size_t segment_output_size = output_size - output_pos;
 			if (segment_output_size > 8192) segment_output_size = 8192;
@@ -94,22 +62,11 @@ struct replay_file_reader {
 			output_pos += segment_output_size;
 		}
 		
-		if (exact && output_pos != output_size) error("replay_file_reader: read %d bytes, expected %d", output_pos, output_size);
+		if (output_pos != output_size) error("replay_file_reader: read %d bytes, expected %d", output_pos, output_size);
 		
-		if (!remastered) {
-			uint32_t calculated_crc32_sum = crc32(output, output_pos);
-			if (calculated_crc32_sum != crc32_sum) error("replay_file_reader: crc32 mismatch: got %08x, expected %08x", calculated_crc32_sum, crc32_sum);
-		}
-		return output_pos;
+		uint32_t calculcated_crc32_sum = crc32(output, output_size);
+		if (calculcated_crc32_sum != crc32_sum) error("replay_file_reader: crc32 mismatch: got %08x, expected %08x", calculcated_crc32_sum, crc32_sum);
 	}
-
-	size_t left() const { return file_end - r.tell(); }
-	void skip_raw(size_t count) {
-		if (count > left()) error("replay_file_reader: truncated extension");
-		r.seek(r.tell() + count);
-	}
-	template<typename T>
-	T get_raw() { return r.template get<T>(); }
 
 	template<typename T, bool little_endian = default_little_endian>
 	T get() {
@@ -148,11 +105,7 @@ struct replay_functions: action_functions {
 	void load_replay(reader_T&& r, bool initial_processing = true, std::vector<uint8_t>* get_map_data = nullptr) {
 		
 		uint32_t identifier = r.template get<uint32_t>();
-		if (identifier != 0x53526572 && identifier != 0x53526573) error("load_replay: invalid identifier %#x", identifier);
-		if (r.modern121) r.template get_raw<uint32_t>(); // game-info section length
-		action_st = {};
-		st.replay_rules = {};
-		st.replay_rules.remastered = r.remastered;
+		if (identifier != 0x53526572) error("load_replay: invalid identifier %#x", identifier);
 
 		std::array<uint8_t, 633> game_info_buffer;
 		r.get_bytes(game_info_buffer.data(), game_info_buffer.size());
@@ -240,60 +193,12 @@ struct replay_functions: action_functions {
 		replay_st.end_frame = frame_count;
 		replay_st.game_type = game_type;
 		
-		auto section_size = [&]() {
-			uint32_t size = r.template get<uint32_t>();
-			if (size > 128 * 1024 * 1024) error("load_replay: section is too large");
-			return size;
-		};
-		replay_st.actions_data_buffer.resize(section_size());
+		replay_st.actions_data_buffer.resize(r.template get<uint32_t>());
 		r.get_bytes(replay_st.actions_data_buffer.data(), replay_st.actions_data_buffer.size());
 		
 		a_vector<uint8_t> map_buffer;
-		map_buffer.resize(section_size());
+		map_buffer.resize(r.template get<uint32_t>());
 		r.get_bytes(map_buffer.data(), map_buffer.size());
-
-		if (r.remastered && r.left()) {
-			std::array<uint8_t, 1152> names;
-			size_t names_size = r.get_bytes(names.data(), names.size(), false);
-			if (names_size != 768 && names_size != 1152) error("load_replay: invalid player-name section size %u", names_size);
-			size_t stride = names_size / 12;
-			for (size_t i = 0; i != 12; ++i) {
-				const char* start = (const char*)names.data() + stride * i;
-				const char* end = std::find(start, start + stride, '\0');
-				if (start != end) replay_st.player_name[i] = a_string(start, end);
-			}
-			while (r.left()) {
-				uint32_t tag = r.template get_raw<uint32_t>();
-				uint32_t stored_size = r.template get_raw<uint32_t>();
-				size_t size = 0;
-				switch (tag) {
-				case 0x4e494b53: size = 0x15e0; break; // SKIN
-				case 0x53544d4c: size = 28; break; // LMTS
-				case 0x58494642: size = 8; break; // BFIX
-				case 0x524c4343: size = 192; break; // CCLR
-				case 0x47464347: size = 25; break; // GCFG
-				default: r.skip_raw(stored_size); continue;
-				}
-				a_vector<uint8_t> buffer(size);
-				r.get_bytes(buffer.data(), buffer.size());
-				data_loading::data_reader_le extension(buffer.data(), buffer.data() + buffer.size());
-				if (tag == 0x53544d4c) {
-					st.replay_rules.limits = extension.template get<std::array<uint32_t, 7>>();
-					for (auto limit : st.replay_rules.limits) {
-						if (!limit || limit > 65536) error("load_replay: invalid object limit %u", limit);
-					}
-					if (st.replay_rules.limits[3] > 8191) error("load_replay: unit limit exceeds unit-tag capacity");
-				} else if (tag == 0x58494642) {
-					st.replay_rules.bug_fixes = extension.template get<std::array<uint8_t, 8>>();
-				} else if (tag == 0x47464347) {
-					st.replay_rules.has_game_config = true;
-					extension.skip(4);
-					st.replay_rules.build = extension.template get<uint32_t>();
-					extension.skip(8);
-					st.replay_rules.game_config_mode = extension.template get<uint8_t>();
-				}
-			}
-		}
 
 		if (get_map_data) *get_map_data = map_buffer;
 		
@@ -317,7 +222,7 @@ struct replay_functions: action_functions {
 		}, initial_processing);
 		
 		for (size_t i = 0; i != 8; ++i) {
-			st.players[i].color = player_color[i] < 16 ? (int)player_color[i] : (int)i;
+			st.players[i].color = (int)player_color[i];
 		}
 	}
 	
@@ -347,8 +252,7 @@ struct replay_player: game_player {
 		load_replay(data_loading::make_replay_file_reader(file_r), initial_processing);
 	}
 	void load_replay_data(uint8_t* data, size_t data_size, bool initial_processing = true) {
-		auto r = data_loading::data_reader_le(data, data + data_size);
-		load_replay(data_loading::make_replay_file_reader(r), initial_processing);
+		load_replay(data_loading::data_reader_le(data, data + data_size), initial_processing);
 	}
 	void lazy_init() {
 		if (!opt_funcs) opt_funcs.emplace(st(), action_st, replay_st);

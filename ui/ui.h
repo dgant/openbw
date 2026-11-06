@@ -16,12 +16,7 @@ struct vr4_entry {
 	std::array<bitmap_t, 64 / sizeof(bitmap_t)> inverted_bitmap;
 };
 struct vx4_entry {
-#ifdef OPENBW_REMASTERED_RUNTIME
-	using index_t = uint32_t;
-#else
-	using index_t = uint16_t;
-#endif
-	std::array<index_t, 16> images;
+	std::array<uint16_t, 16> images;
 };
 
 struct pcx_image {
@@ -202,11 +197,7 @@ void load_tileset_image_data(tileset_image_data& img, size_t tileset_index, load
 	const char* tileset_name = tileset_names.at(tileset_index);
 
 	load_data_file(vr4_data, format("Tileset/%s.vr4", tileset_name));
-#ifdef OPENBW_REMASTERED_RUNTIME
-	load_data_file(vx4_data, format("Tileset/%s.vx4ex", tileset_name));
-#else
 	load_data_file(vx4_data, format("Tileset/%s.vx4", tileset_name));
-#endif
 	load_data_file(img.wpe, format("Tileset/%s.wpe", tileset_name));
 
 	a_vector<uint8_t> grp_data;
@@ -230,10 +221,10 @@ void load_tileset_image_data(tileset_image_data& img, size_t tileset_index, load
 		}
 	}
 	data_reader<true, false> vx4_r(vx4_data.data(), vx4_data.data() + vx4_data.size());
-	img.vx4.resize(vx4_data.size() / (16 * sizeof(vx4_entry::index_t)));
+	img.vx4.resize(vx4_data.size() / 32);
 	for (size_t i = 0; i != img.vx4.size(); ++i) {
 		for (size_t i2 = 0; i2 != 16; ++i2) {
-			img.vx4[i].images[i2] = vx4_r.get<vx4_entry::index_t>();
+			img.vx4[i].images[i2] = vx4_r.get<uint16_t>();
 		}
 	}
 
@@ -1415,13 +1406,6 @@ struct ui_functions: ui_util_functions {
 	a_vector<std::pair<uint32_t, const sprite_t*>> sorted_sprites;
 
 	void draw_sprites(uint8_t* data, size_t data_pitch) {
-#ifdef OPENBW_CLASSIC_RUNTIME
-		current_selection_sprites_set.resize(2500);
-		status_bar_sprites_set.resize(2500);
-#else
-		current_selection_sprites_set.resize(st.sprites_container.max_size);
-		status_bar_sprites_set.resize(st.sprites_container.max_size);
-#endif
 
 		image_draw_queue.clear();
 

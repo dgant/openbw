@@ -16,15 +16,15 @@ struct unit_id_t {
 	T raw_value = 0;
 	unit_id_t() = default;
 	explicit unit_id_t(T raw_value) : raw_value(raw_value) {}
-	explicit unit_id_t(size_t index, unsigned int generation, unsigned int index_bits = 11) : raw_value((T)(index | generation << index_bits)) {}
+	explicit unit_id_t(size_t index, unsigned int generation) : raw_value((T)(index | generation << 11)) {}
 	bool operator==(const unit_id_t& n) const {
 		return raw_value == n.raw_value;
 	}
-	size_t index(unsigned int index_bits = 11) const {
-		return raw_value & ((1u << index_bits) - 1);
+	size_t index() const {
+		return raw_value & 0x7ff;
 	}
-	unsigned int generation(unsigned int index_bits = 11) const {
-		return raw_value >> index_bits;
+	unsigned int generation() const {
+		return raw_value >> 11;
 	}
 };
 
@@ -44,29 +44,19 @@ static void bw_insert_list(cont_T& cont, T& v) {
 	else cont.insert(std::next(cont.begin()), v);
 }
 
-template<typename T, size_t default_max_size, size_t allocation_granularity>
+template<typename T, size_t max_size, size_t allocation_granularity>
 struct object_container {
 	a_deque<std::array<T, allocation_granularity>> list;
 	intrusive_list<T, default_link_f> free_list;
 	size_t size = 0;
-	size_t max_size = default_max_size;
-
-	void reset(size_t limit) {
-		free_list.clear();
-		list.clear();
-		size = 0;
-		max_size = limit;
-	}
 	
 	T* get(size_t index, bool add_new_to_free = true) {
-		if (index >= max_size) error("object_container::get: invalid index %u", index);
 		if (index) index = max_size - index;
 		while (size <= index) grow(add_new_to_free);
 		return &list[index / allocation_granularity][index % allocation_granularity];
 	}
 	
 	T* try_get(size_t index) {
-		if (index >= max_size) return nullptr;
 		if (index) index = max_size - index;
 		if (size <= index) return nullptr;
 		return &list[index / allocation_granularity][index % allocation_granularity];
@@ -113,22 +103,6 @@ struct object_container {
 	void push(T* obj) {
 		bw_insert_list(free_list, *obj);
 	}
-};
-
-// Replay-specific values are copied with simulation snapshots, never global.
-struct replay_rules_t {
-	bool remastered = false;
-	std::array<uint32_t, 7> limits{{5000, 2500, 500, 1700, 100, 2000, 500}};
-	std::array<uint8_t, 8> bug_fixes{};
-	bool has_game_config = false;
-	uint32_t build = 0;
-	uint8_t game_config_mode = 5;
-
-	unsigned int unit_index_bits() const { return limits[3] > 1700 ? 13 : 11; }
-	bool order_allocation_fix() const {
-		return (bug_fixes[0] & 4) || (has_game_config && (game_config_mode != 5 || build > 8153));
-	}
-	bool flying_scv_fix() const { return order_allocation_fix() && has_game_config && build >= 9713; }
 };
 
 enum struct race_t {

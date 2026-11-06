@@ -4,14 +4,6 @@ const fs = require("fs/promises");
 const defaultReplayPath = "/workspace/replays/PurpleWave vs Monster Tau Cross CTR_41B69CB9.rep";
 const basilReplayUrl = "https://data.basil-ladder.net/bots/Brainiac/Brainiac%20vs%20adias%20Roadrunner%20CTR_95D142E3.rep";
 
-test.beforeEach(async ({ page }) => {
-  // The archived ladder URL has expired; retain the URL-loading path with stable bytes.
-  await page.route(basilReplayUrl, route => route.fulfill({
-    path: defaultReplayPath,
-    contentType: "application/octet-stream"
-  }));
-});
-
 async function createReplayDrop(page, replayPath = defaultReplayPath) {
   const replayName = replayPath.split("/").pop();
   const replayBuffer = await fs.readFile(replayPath);
@@ -44,7 +36,6 @@ test("footer geometry has no dead gap above/below the playback bar and no bottom
   await page.waitForSelector("#rv_modal", { state: "hidden", timeout: 30000 });
   await page.waitForFunction(() => typeof _replay_get_value === "function" && _replay_get_value(4) > 0, null, { timeout: 120000 });
 
-  await expect(page.locator("#production_tab_content1 .prod_prog_bar").first()).toBeVisible({ timeout: 15000 });
   const timerBox = await page.locator(".rv-rc-timer").boundingBox();
   const progressBox = await page.locator(".rv-rc-progress-bar").boundingBox();
   const replayBox = await page.locator(".replay-control").boundingBox();

@@ -1,32 +1,5 @@
 # Replay Viewer Build Specification
 
-## Replay formats
-
-- Detect classic 1.16.1 and Remastered replay containers without a user setting.
-  Decode classic PKWARE segments and Remastered zlib/raw segments; recognize the
-  1.21+ identifier and its extended sections and 32-bit command unit references.
-- Read replay-specific object limits and supported compatibility flags before
-  initializing the map. Keep them in simulation state so rewinds preserve them
-  and loading a legacy replay restores its original limits and behavior.
-- Support modern map string tables, map version identifiers and neutral egg
-  blockers on unwalkable terrain. Display extended player names.
-- The same loader serves file browsing, drag-and-drop, URLs, playlists and
-  standalone launches. Alternating formats must not require a page reload.
-- Compile independent classic and Remastered runtimes. Keep the classic
-  simulation pinned to the tested pre-Remastered revision and use the shared
-  viewer adapter for both. Dispose the previous runtime's loop and event
-  listeners when switching formats.
-- Remastered playback must load the extended CV5/VF4 simulation terrain and
-  matching VR4/VX4EX graphics. Decode VX4EX mini-tile references as 32-bit values.
-  Never substitute classic terrain or bypass unit placement to hide missing data.
-- Replay downloads retain the original bytes; conversion must not overwrite
-  the user's source file. Rendering continues to use classic game assets.
-- Label Remastered support experimental until independently validated against
-  original-game playback across a representative version and map corpus.
-- Validate reported desyncs against independent reference states, not merely
-  deterministic self-replay. Keep the Backrooms replay's reference unit snapshots
-  and recorded-selection regression in the source suite.
-
 The default `scripts/build_replay_viewer.sh` command builds the OpenBW browser
 runtime into the sibling `openbw-replay-viewer/docs/v1.4` directory, then packages
 the maintained `openbw-replay-viewer/desktop` application from that same `docs`
