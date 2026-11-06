@@ -1,5 +1,11 @@
 # Lessons
 
+- Authentication differs between the host and container: the Windows `gh`
+  keyring OAuth login can create upstream cross-fork pull requests, while the
+  fine-grained `.env` token used in the container was rejected for that operation.
+  Check the previously successful workflow and `gh auth status` before concluding
+  the task needs new credentials. Keep credential values out of logs and source.
+
 - Remastered rules belong to each replay's simulation state, not global pool
   constants: legacy loads and rewind snapshots must restore their own limits,
   unit-tag layout and order-allocation rules. Modern command IDs must also map
