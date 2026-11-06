@@ -4,3 +4,5 @@
 - When integrating upstream OpenBW commits, leave the tested changes unpushed until the human has completed local validation.
 
 - The default build must produce both the local web viewer and standalone desktop package from matching assets. The `.rep` association must use that maintained output; remove obsolete duplicate releases.
+- For Remastered desyncs, compare directly with sagi.gg and alexpineda/openbw. Audit even small simulation-rule differences; loading the format or replaying deterministically does not establish compatibility. Keep differing legacy and Remastered behavior replay-specific.
+- Prefer separately compiled classic and Remastered engines selected from each replay's format over invasive compatibility changes. Remastered maps also require the extended terrain data, including 32-bit VX4EX graphics indices.

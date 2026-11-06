@@ -17266,9 +17266,7 @@ struct state_functions {
 			spread_creep_completely(u, u->sprite->position);
 		}
 		finish_building_unit(u);
-		// Modern ladder maps place neutral eggs on unwalkable terrain as blockers.
-		bool fixed_map_egg = st.replay_rules.remastered && owner == 11 && unit_is_egg(u);
-		if (!fixed_map_egg && !place_completed_unit(u)) {
+		if (!place_completed_unit(u)) {
 			error("place_completed_unit failed: type %d, owner %d at (%d, %d)", (int)unit_type->id, owner, pos.x, pos.y);
 		}
 

@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-test("legacy and Remastered replays alternate and rewind in the same engine", () => {
+test("replay decoder restores format-specific rules and rewind snapshots", () => {
   const root = path.resolve(__dirname, "../..");
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "replay-formats-"));
   try {
@@ -21,7 +21,10 @@ test("legacy and Remastered replays alternate and rewind in the same engine", ()
     const result = spawnSync(binary, [
       "/workspace/bw/", legacy, path.join(fixtures, "remastered-zvz.rep"),
       legacy, path.join(fixtures, "remastered-tvp.rep"), legacy
-    ], { encoding: "utf8", timeout: 120000 });
+    ], { encoding: "utf8", timeout: 120000, env: {
+      ...process.env,
+      OPENBW_TERRAIN_MPQ: path.join(root, "../openbw-replay-viewer/docs/v1.4/remastered/terrain.mpq")
+    } });
     assert.equal(result.status, 0, result.stdout + result.stderr);
     console.log(result.stdout.trim());
   } finally {

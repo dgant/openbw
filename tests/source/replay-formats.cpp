@@ -11,7 +11,9 @@ struct silent_replay : replay_functions {
 
 int main(int argc, char** argv) {
 	assert(argc > 2);
-	game_player player(static_cast<const char*>(argv[1]));
+	auto data = data_loading::data_files_directory(argv[1]);
+	if (std::getenv("OPENBW_TERRAIN_MPQ")) data.mpqs.emplace_front(std::getenv("OPENBW_TERRAIN_MPQ"));
+	game_player player([&](a_vector<uint8_t>& bytes, a_string name) { data(bytes, name); });
 	action_state actions;
 	replay_state replay;
 	silent_replay funcs(player.st(), actions, replay);

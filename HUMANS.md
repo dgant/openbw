@@ -5,7 +5,10 @@
 Browse for or drop a `.rep` file to load either StarCraft 1.16.1 or Remastered.
 The file format is detected automatically; no setting or conversion step is
 needed. Mixed-format playlists, replay URLs, and the desktop launcher use the
-same engine loader. Remastered playback uses classic graphics and is experimental:
+same format selector. The classic engine is built from the tested pre-Remastered
+simulation revision; the Remastered engine and extended terrain load separately.
+Switching formats disposes the previous engine without reloading the page.
+Remastered playback uses standard-definition graphics and is experimental:
 successful loading and deterministic seeking do not guarantee exact simulation
 agreement with every version of StarCraft.
 
@@ -20,6 +23,17 @@ mixed playlists and unchanged downloads at desktop and mobile widths, and saves
 `test-results/remastered-*.png`. The source suite also completes those replays in
 one native engine instance, checking pool sizes, unit references and snapshots.
 Native compilation requires zlib development headers (`zlib1g-dev` on Debian).
+
+The reported Backrooms desync has a separate source regression:
+
+```bash
+node --test tests/source/replay-consistency.test.js
+```
+
+It asserts unit identities, owners and positions against independent sagi.gg
+snapshots at frames 1000, 2233, 5000 and 14035, and checks all 9448 recorded
+selection commands. The only three unresolved selections reference dead units.
+The browser suite checks resources, rendering and rewind for that replay too.
 
 ## Local development
 
@@ -104,6 +118,12 @@ frame zero (including after deferred zoom restoration), and saves
 - On first use, the build installs the locked desktop dependencies and downloads the configured Neutralino runtime if missing.
 - On Windows, run `../openbw-replay-viewer/desktop/scripts/register-file-association.ps1` once to register the stable output path for `.rep`. Keep the executable and `resources.neu` together.
 - The current local build writes `openbw.js` and `openbw.wasm` into `../openbw-replay-viewer/docs/v1.4/`.
+- The second engine is built into `docs/v1.4/remastered/`. Its `terrain.mpq`
+  overrides only extended terrain files; `terrain-manifest.json` records their
+  reference generation and checksums. Classic playback never loads that archive.
+- `scripts/build_web_replay_viewer.sh classic` or `remastered` rebuilds only that
+  target during development. The default command always builds both and the
+  unified build packages both into the desktop application.
 - The wrapper HTML/JS currently still lives in `../openbw-replay-viewer/docs/`.
 - Example replays are in `../replays/`.
 - The current local viewer auto-loads MPQs from `../bw/` via the wrapper's `docs/bw` symlink.

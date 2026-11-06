@@ -6,9 +6,15 @@
   to classic IDs for existing UI APM/acknowledgement hooks.
 - Recent Remastered player-name sections can contain 12 x 96 bytes, not only
   the 12 x 64 layout in older reference converters. Decode the actual length.
-- Octagon SE 2.0 has preplaced neutral eggs on unwalkable terrain, including
-  (1136, 496). Ordinary completed-unit placement rejects these map blockers;
-  preserve their specified positions without changing legacy placement rules.
+- A failed neutral-egg placement on a Remastered map can mean the wrong terrain
+  data, not a new placement rule. The Octagon/Backrooms workaround was removed:
+  the extended CV5/VF4 tables allow normal placement and correct pathfinding.
+- Backrooms diverged at frame 2233 with classic terrain even under the public
+  alexpineda fork. The current engine with sagi.gg's extended terrain matched
+  every comparable unit at four independent checkpoints through frame 14035.
+  Compare both engine and assets. Matching loaders alone is insufficient.
+- Remastered graphics use VX4EX, with 32-bit rather than 16-bit mini-tile
+  references. Updating only simulation terrain would leave the renderer wrong.
 - Completing a replay and replaying a snapshot deterministically establish
   loader and seek stability, not agreement with the original StarCraft game.
 

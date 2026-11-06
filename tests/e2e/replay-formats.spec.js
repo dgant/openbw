@@ -6,6 +6,7 @@ const fixtures = path.join(__dirname, "../fixtures");
 const legacy = { file: "elimination-0145.rep", frames: 33378, names: ["PurpleProtoss", "krasi0"] };
 const remastered = { file: "remastered-zvz.rep", frames: 12518, names: ["getoutchobo", "vvvvooo!"] };
 const terran = { file: "remastered-tvp.rep", frames: 7333, names: ["lIlIlIIIllIlIlI", "454553455"] };
+const backrooms = { file: "remastered-backrooms-desync.rep", frames: 14036, names: ["scloader", "20YY"] };
 
 async function dropReplays(page, replays) {
   const data = replays.map(replay => ({ name: replay.file, bytes: [...fs.readFileSync(path.join(fixtures, replay.file))] }));
@@ -53,6 +54,43 @@ async function expectPaintedCanvas(page) {
 }
 
 for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 667 }]) {
+  test(`reported Backrooms replay uses extended terrain at ${viewport.width}px`, async ({ page }) => {
+    test.setTimeout(180000);
+    const errors = [];
+    page.on("pageerror", error => errors.push(String(error)));
+    page.on("console", message => {
+      if (["error", "warning"].includes(message.type())) errors.push(message.text());
+    });
+    await page.setViewportSize(viewport);
+    await page.addInitScript(() => {
+      localStorage.volumeSettings = JSON.stringify({ level: 0, muted: true });
+      localStorage.audioCategorySettings = JSON.stringify({ combat: { enabled: false }, acknowledgements: { enabled: false }, music: { enabled: false } });
+    });
+    await page.goto("/");
+    await expect(page.locator("#select_replay_label")).not.toHaveClass(/disabled/, { timeout: 30000 });
+    await dropReplays(page, [backrooms]);
+    await expect.poll(() => page.evaluate(() => main_has_been_called && _replay_get_value(4))).toBe(backrooms.frames);
+    expect(await page.evaluate(() => Module.replayFormat)).toBe("remastered");
+    for (const [frame, resources] of [
+      [2233, [[10, 0], [58, 0]]],
+      [5000, [[270, 88], [166, 0]]],
+      [14035, [[296, 293], [168, 324]]],
+      [5000, [[270, 88], [166, 0]]]
+    ]) {
+      await seek(page, frame);
+      expect((await stats(page)).map(player => player.slice(0, 2))).toEqual(resources);
+      await expectPaintedCanvas(page);
+    }
+    await page.evaluate(() => {
+      _observer_set_value(0);
+      _fog_of_war_set_value(0);
+      _ui_set_screen_center(3808, 272);
+      _ui_force_static_redraw();
+    });
+    await page.screenshot({ path: `test-results/remastered-backrooms-${viewport.width}.png` });
+    expect(errors).toEqual([]);
+  });
+
   test(`dragging and alternating replay formats at ${viewport.width}px`, async ({ page }) => {
     test.setTimeout(180000);
     const errors = [];
@@ -84,6 +122,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 667 
       await dropReplays(page, [replay]);
       await page.waitForFunction(count => window.formatTestLoads === count, ++loads);
       expect(await page.evaluate(() => _replay_get_value(4))).toBe(replay.frames);
+      expect(await page.evaluate(() => Module.replayFormat)).toBe(replay === legacy ? "classic" : "remastered");
       expect(await page.evaluate(() => players.map(p => UTF8ToString(_player_get_value(p, C_NICK))))).toEqual(replay.names);
       await expectPaintedCanvas(page);
       await seek(page, 2400);
@@ -106,6 +145,10 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 667 
       await page.locator("#rv-rc-play").click();
       await expect.poll(() => page.evaluate(() => _replay_get_value(2))).toBeGreaterThan(2424);
       await page.locator("#rv-rc-play").click();
+      expect(await page.evaluate(() => _replay_get_value(1))).toBe(1);
+      await page.keyboard.press("Space");
+      expect(await page.evaluate(() => _replay_get_value(1))).toBe(0);
+      await page.keyboard.press("Space");
       expect(await page.evaluate(() => _replay_get_value(1))).toBe(1);
       expect(errors).toEqual([]);
     }
