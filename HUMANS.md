@@ -1,5 +1,26 @@
 # OpenBW Replay Viewer
 
+## Replay formats
+
+Browse for or drop a `.rep` file to load either StarCraft 1.16.1 or Remastered.
+The file format is detected automatically; no setting or conversion step is
+needed. Mixed-format playlists, replay URLs, and the desktop launcher use the
+same engine loader. Remastered playback uses classic graphics and is experimental:
+successful loading and deterministic seeking do not guarantee exact simulation
+agreement with every version of StarCraft.
+
+Run the mixed-format regression with the local server running:
+
+```bash
+npx playwright test tests/e2e/replay-formats.spec.js
+```
+
+It drops and alternates legacy and Remastered fixtures, checks playback, rewind,
+mixed playlists and unchanged downloads at desktop and mobile widths, and saves
+`test-results/remastered-*.png`. The source suite also completes those replays in
+one native engine instance, checking pool sizes, unit references and snapshots.
+Native compilation requires zlib development headers (`zlib1g-dev` on Debian).
+
 ## Local development
 
 Build the browser runtime and standalone desktop packages together:

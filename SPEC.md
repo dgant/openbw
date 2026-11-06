@@ -1,5 +1,22 @@
 # Replay Viewer Build Specification
 
+## Replay formats
+
+- Detect classic 1.16.1 and Remastered replay containers without a user setting.
+  Decode classic PKWARE segments and Remastered zlib/raw segments; recognize the
+  1.21+ identifier and its extended sections and 32-bit command unit references.
+- Read replay-specific object limits and supported compatibility flags before
+  initializing the map. Keep them in simulation state so rewinds preserve them
+  and loading a legacy replay restores its original limits and behavior.
+- Support modern map string tables, map version identifiers and neutral egg
+  blockers on unwalkable terrain. Display extended player names.
+- The same loader serves file browsing, drag-and-drop, URLs, playlists and
+  standalone launches. Alternating formats must not require a page reload.
+- Replay downloads retain the original bytes; conversion must not overwrite
+  the user's source file. Rendering continues to use classic game assets.
+- Label Remastered support experimental until independently validated against
+  original-game playback across a representative version and map corpus.
+
 The default `scripts/build_replay_viewer.sh` command builds the OpenBW browser
 runtime into the sibling `openbw-replay-viewer/docs/v1.4` directory, then packages
 the maintained `openbw-replay-viewer/desktop` application from that same `docs`

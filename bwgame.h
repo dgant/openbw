@@ -190,6 +190,7 @@ struct game_state {
 };
 
 struct state_base_copyable {
+	replay_rules_t replay_rules;
 
 	const global_state* global;
 	game_state* game;
@@ -650,22 +651,25 @@ struct state_functions {
 
 	template<typename T>
 	unit_t* get_unit(unit_id_t<T> id) const {
-		size_t idx = id.index();
+		unsigned int bits = st.replay_rules.unit_index_bits();
+		size_t idx = id.index(bits);
 		if (!idx) return nullptr;
 		unit_t* u = get_unit(idx - 1);
 		if (!u) return nullptr;
-		if (u->unit_id_generation % (1u << (int_bits<T>::value - 11)) != id.generation()) return nullptr;
+		if (u->unit_id_generation % (1u << (int_bits<T>::value - bits)) != id.generation(bits)) return nullptr;
 		return u;
 	}
 
 	unit_id get_unit_id(const unit_t* u) const {
 		if (!u) return unit_id{};
-		return unit_id(u->index + 1, u->unit_id_generation % (1u << 5));
+		unsigned int bits = st.replay_rules.unit_index_bits();
+		return unit_id(u->index + 1, u->unit_id_generation % (1u << (16 - bits)), bits);
 	}
 
 	unit_id_32 get_unit_id_32(const unit_t* u) const {
 		if (!u) return unit_id_32{};
-		return unit_id_32(u->index + 1, u->unit_id_generation % (1u << 21));
+		unsigned int bits = st.replay_rules.unit_index_bits();
+		return unit_id_32(u->index + 1, u->unit_id_generation % (1u << (32 - bits)), bits);
 	}
 
 	bool is_in_map_bounds(const unit_type_t* unit_type, xy pos) const {
@@ -14516,7 +14520,7 @@ struct state_functions {
 	}
 
 	bullet_t* create_bullet(const weapon_type_t* weapon_type, unit_t* source_unit, xy pos, int owner, direction_t heading) {
-		if (weapon_type->id == WeaponTypes::Halo_Rockets && st.active_bullets_size >= 80) return nullptr;
+		if (weapon_type->id == WeaponTypes::Halo_Rockets && st.active_bullets_size >= st.bullets_container.max_size * 4 / 5) return nullptr;
 		if (u_cannot_attack(source_unit) && !is_spell(weapon_type)) return nullptr;
 		bullet_t* b = st.bullets_container.top();
 		if (!b) return nullptr;
@@ -14563,7 +14567,7 @@ struct state_functions {
 			st.free_thingies.pop_front();
 			return r;
 		}
-		if (st.thingies.size() >= 500) return nullptr;
+		if (st.thingies.size() >= st.replay_rules.limits[2]) return nullptr;
 		return &*st.thingies.emplace(st.thingies.end());
 	}
 
@@ -16837,6 +16841,14 @@ struct state_functions {
 		}
 	}
 
+	bool can_allocate_order(const unit_t* u, const order_type_t* order_type) const {
+		if (!st.replay_rules.order_allocation_fix()) return true;
+		if (st.active_orders_size < st.orders_container.max_size * 9 / 10 && u->order_queue_count < 8) return true;
+		if (u->order_type->id == Orders::Die || u->order_type->id == Orders::ResetHarvestCollision) return true;
+		return st.replay_rules.flying_scv_fix() && u->order_queue_count >= 8 &&
+			u->order_type->id == Orders::ConstructingBuilding && order_type->id == Orders::ResetCollision;
+	}
+
 	void set_queued_order(unit_t* u, bool interrupt, const order_type_t* order_type, order_target_t target) {
 		if (u->order_type->id == Orders::Die) return;
 		while (!u->order_queue.empty()) {
@@ -16845,6 +16857,7 @@ struct state_functions {
 			if ((!interrupt || !o->order_type->can_be_interrupted) && o->order_type != order_type) break;
 			remove_queued_order(u, o);
 		}
+		if (!can_allocate_order(u, order_type)) return;
 		if (order_type->id == Orders::Cloak) {
 			error("cloak fixme");
 		} else {
@@ -16872,7 +16885,7 @@ struct state_functions {
 			}
 		}
 		if (queue) {
-			if (u->order_queue_count < 8 && st.active_orders_size < 1800) {
+			if (u->order_queue_count < 8 && st.active_orders_size < st.orders_container.max_size * 9 / 10) {
 				queue_order_back(u, order_type, target);
 			}
 		} else {
@@ -17253,8 +17266,10 @@ struct state_functions {
 			spread_creep_completely(u, u->sprite->position);
 		}
 		finish_building_unit(u);
-		if (!place_completed_unit(u)) {
-			error("place_completed_unit failed");
+		// Modern ladder maps place neutral eggs on unwalkable terrain as blockers.
+		bool fixed_map_egg = st.replay_rules.remastered && owner == 11 && unit_is_egg(u);
+		if (!fixed_map_egg && !place_completed_unit(u)) {
+			error("place_completed_unit failed: type %d, owner %d at (%d, %d)", (int)unit_type->id, owner, pos.x, pos.y);
 		}
 
 		complete_unit(u);
@@ -19590,11 +19605,11 @@ struct state_copier {
 	state_functions funcs;
 	state_copier(const state&st, state& r) : st(st), r(r), funcs(r) {}
 
-	std::array<bool, 1700> unit_copied{};
-	std::array<bool, 100> bullet_copied{};
-	std::array<bool, 2500> sprite_copied{};
-	std::array<bool, 5000> image_copied{};
-	std::array<bool, 2000> order_copied{};
+	a_vector<bool> unit_copied = a_vector<bool>(st.units_container.max_size);
+	a_vector<bool> bullet_copied = a_vector<bool>(st.bullets_container.max_size);
+	a_vector<bool> sprite_copied = a_vector<bool>(st.sprites_container.max_size);
+	a_vector<bool> image_copied = a_vector<bool>(st.images_container.max_size);
+	a_vector<bool> order_copied = a_vector<bool>(st.orders_container.max_size);
 	unit_t* unit(const unit_t* v) {
 		size_t index = v->index;
 		auto* u = r.units_container.get(index, false);
@@ -19743,6 +19758,11 @@ struct state_copier {
 
 	void operator()() {
 		(state_base_copyable&)r = (state_base_copyable&)st;
+		r.units_container.reset(st.units_container.max_size);
+		r.bullets_container.reset(st.bullets_container.max_size);
+		r.sprites_container.reset(st.sprites_container.max_size);
+		r.images_container.reset(st.images_container.max_size);
+		r.orders_container.reset(st.orders_container.max_size);
 
 		assemble(r.free_thingies, st.free_thingies, &state_copier::thingy);
 		assemble(r.active_thingies, st.active_thingies, &state_copier::thingy);
@@ -19987,20 +20007,20 @@ struct game_load_functions : state_functions {
 		st.dead_units.clear();
 		for (auto& v : st.player_units) v.clear();
 
-		st.units_container = {};
+		st.units_container.reset(st.replay_rules.limits[3]);
 
 		st.active_bullets_size = 0;
 		st.active_bullets.clear();
-		st.bullets_container = {};
+		st.bullets_container.reset(st.replay_rules.limits[4]);
 
-		st.sprites_container = {};
+		st.sprites_container.reset(st.replay_rules.limits[1]);
 		st.sprites_on_tile_line.clear();
 		st.sprites_on_tile_line.resize(game_st.map_tile_height);
 
-		st.images_container = {};
+		st.images_container.reset(st.replay_rules.limits[0]);
 
 		st.active_orders_size = 0;
-		st.orders_container = {};
+		st.orders_container.reset(st.replay_rules.limits[5]);
 
 		st.active_thingies_size = 0;
 		st.active_thingies.clear();
@@ -21287,8 +21307,12 @@ struct game_load_functions : state_functions {
 			for (auto& v : tags) {
 				tag_t tag = std::get<0>(v);
 				auto i = chunks.find(tag);
+				if (i == chunks.end() && tag == "STR " && st.replay_rules.remastered) {
+					tag = "STRx";
+					i = chunks.find(tag);
+				}
 				if (i == chunks.end()) {
-					if (std::get<1>(v)) error("map is missing required chunk '%s'", tagstr(tag));
+					if (std::get<1>(v) && !(tag == "COLR" && st.replay_rules.remastered)) error("map is missing required chunk '%s'", tagstr(tag));
 				} else {
 					if (!tag_funcs[tag]) error("tag '%s' is missing a function", tagstr(tag));
 					for (auto& v : i->second) {
@@ -21301,6 +21325,10 @@ struct game_load_functions : state_functions {
 		int version = 0;
 		tag_funcs["VER "] = [&](data_reader_le r) {
 			version = r.get<uint16_t>();
+			if (st.replay_rules.remastered) {
+				if (version == 206) version = 205;
+				if (version == 64) version = 63;
+			}
 		};
 		tag_funcs["DIM "] = [&](data_reader_le r) {
 			game_st.map_tile_width = r.get<uint16_t>();
@@ -21323,14 +21351,15 @@ struct game_load_functions : state_functions {
 				st.players[i].race = (race_t)r.get<int8_t>();
 			}
 		};
-		tag_funcs["STR "] = [&](data_reader_le r) {
-			if (r.left() < 2) return;
+		auto read_strings = [&](data_reader_le r, bool extended) {
+			if (r.left() < (extended ? 4u : 2u)) return;
 			auto start = r;
-			size_t num = r.get<uint16_t>();
+			size_t num = extended ? r.get<uint32_t>() : r.get<uint16_t>();
+			if (num > r.left() / (extended ? 4 : 2)) error("invalid map string table");
 			game_st.map_strings.clear();
 			game_st.map_strings.resize(num);
 			for (size_t i = 0; i != num; ++i) {
-				size_t offset = r.get<uint16_t>();
+				size_t offset = extended ? r.get<uint32_t>() : r.get<uint16_t>();
 				auto t = start;
 				if (offset < t.left()) {
 					t.skip(offset);
@@ -21342,6 +21371,8 @@ struct game_load_functions : state_functions {
 				}
 			}
 		};
+		tag_funcs["STR "] = [&](data_reader_le r) { read_strings(r, false); };
+		tag_funcs["STRx"] = [&](data_reader_le r) { read_strings(r, true); };
 		tag_funcs["SPRP"] = [&](data_reader_le r) {
 			game_st.scenario_name = get_map_string(r.get<uint16_t>());
 			game_st.scenario_description = get_map_string(r.get<uint16_t>());
@@ -21427,8 +21458,14 @@ struct game_load_functions : state_functions {
 					if (unit_type == UnitTypes::Special_Pit_Door) owner = 11;
 					if (unit_type == UnitTypes::Special_Right_Pit_Door) owner = 11;
 					if (use_map_settings || owner == 11) {
-						create_initial_unit(get_unit_type(unit_type), xy(x, y), owner);
-						if (flags & 0x80) error("disable thingy unit");
+						auto* u = create_initial_unit(get_unit_type(unit_type), xy(x, y), owner);
+						if (flags & 0x80) {
+							if (!st.replay_rules.remastered) error("disable thingy unit");
+							if (u) {
+								u_set_status_flag(u, unit_t::status_flag_disabled);
+								u_set_status_flag(u, unit_t::status_flag_no_collide);
+							}
+						}
 					}
 				}
 			}

@@ -1406,6 +1406,8 @@ struct ui_functions: ui_util_functions {
 	a_vector<std::pair<uint32_t, const sprite_t*>> sorted_sprites;
 
 	void draw_sprites(uint8_t* data, size_t data_pitch) {
+		current_selection_sprites_set.resize(st.sprites_container.max_size);
+		status_bar_sprites_set.resize(st.sprites_container.max_size);
 
 		image_draw_queue.clear();
 

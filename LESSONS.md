@@ -1,5 +1,17 @@
 # Lessons
 
+- Remastered rules belong to each replay's simulation state, not global pool
+  constants: legacy loads and rewind snapshots must restore their own limits,
+  unit-tag layout and order-allocation rules. Modern command IDs must also map
+  to classic IDs for existing UI APM/acknowledgement hooks.
+- Recent Remastered player-name sections can contain 12 x 96 bytes, not only
+  the 12 x 64 layout in older reference converters. Decode the actual length.
+- Octagon SE 2.0 has preplaced neutral eggs on unwalkable terrain, including
+  (1136, 496). Ordinary completed-unit placement rejects these map blockers;
+  preserve their specified positions without changing legacy placement rules.
+- Completing a replay and replaying a snapshot deterministically establish
+  loader and seek stability, not agreement with the original StarCraft game.
+
 - The `basil-ladder/openbw` fog-of-war branch merges cleanly into the current `openbw` master.
 - The historical replay-viewer Emscripten build no longer works with the original `1.38.13` SDK tag because that exact target is no longer in the current `emsdk` manifest.
 - `emsdk` `1.38.48` can build the web runtime, but the SDL_mixer port currently fails during configure in this container. The local build script therefore disables SDL mixer so the viewer remains buildable while audio is investigated separately.

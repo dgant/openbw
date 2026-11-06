@@ -1002,37 +1002,40 @@ struct action_functions: state_functions {
 	}
 
 	template<typename reader_T>
-	bool read_action_select(int owner, reader_T&& r) {
+	unit_t* read_action_unit(reader_T& r, bool wide) {
+		if (wide) return get_unit(unit_id_32(r.template get<uint32_t>()));
+		return get_unit(unit_id(r.template get<uint16_t>()));
+	}
+
+	template<typename reader_T>
+	bool read_action_select(int owner, reader_T&& r, bool wide = false) {
 		size_t n = r.template get<uint8_t>();
 		if (n > 12) error("invalid selection of %d units", n);
 		static_vector<unit_t*, 12> units;
 		for (size_t i = 0; i != n; ++i) {
-			auto uid = unit_id(r.template get<uint16_t>());
-			units.push_back(get_unit(uid));
+			units.push_back(read_action_unit(r, wide));
 		}
 		return action_select(owner, units);
 	}
 
 	template<typename reader_T>
-	bool read_action_shift_select(int owner, reader_T&& r) {
+	bool read_action_shift_select(int owner, reader_T&& r, bool wide = false) {
 		size_t n = r.template get<uint8_t>();
 		if (n > 12) error("invalid selection of %d units", n);
 		static_vector<unit_t*, 12> units;
 		for (size_t i = 0; i != n; ++i) {
-			auto uid = unit_id(r.template get<uint16_t>());
-			units.push_back(get_unit(uid));
+			units.push_back(read_action_unit(r, wide));
 		}
 		return action_shift_select(owner, units);
 	}
 
 	template<typename reader_T>
-	bool read_action_deselect(int owner, reader_T&& r) {
+	bool read_action_deselect(int owner, reader_T&& r, bool wide = false) {
 		size_t n = r.template get<uint8_t>();
 		if (n > 12) error("invalid deselection of %d units", n);
 		static_vector<unit_t*, 12> units;
 		for (size_t i = 0; i != n; ++i) {
-			auto uid = unit_id(r.template get<uint16_t>());
-			units.push_back(get_unit(uid));
+			units.push_back(read_action_unit(r, wide));
 		}
 		return action_deselect(owner, units);
 	}
@@ -1044,10 +1047,10 @@ struct action_functions: state_functions {
 	}
 
 	template<typename reader_T>
-	bool read_action_default_order(int owner, reader_T&& r) {
+	bool read_action_default_order(int owner, reader_T&& r, bool wide = false) {
 		int x = r.template get<int16_t>();
 		int y = r.template get<int16_t>();
-		unit_t* target = get_unit(unit_id(r.template get<uint16_t>()));
+		unit_t* target = read_action_unit(r, wide);
 		UnitTypes target_unit_type_id = (UnitTypes)r.template get<uint16_t>();
 		const unit_type_t* target_unit_type = target_unit_type_id == UnitTypes::None ? nullptr : get_unit_type(target_unit_type_id);
 		bool queue = r.template get<uint8_t>() != 0;
@@ -1076,10 +1079,10 @@ struct action_functions: state_functions {
 	}
 
 	template<typename reader_T>
-	bool read_action_order(int owner, reader_T&& r) {
+	bool read_action_order(int owner, reader_T&& r, bool wide = false) {
 		int x = r.template get<int16_t>();
 		int y = r.template get<int16_t>();
-		unit_t* target = get_unit(unit_id(r.template get<uint16_t>()));
+		unit_t* target = read_action_unit(r, wide);
 		UnitTypes target_unit_type_id = (UnitTypes)r.template get<uint16_t>();
 		const unit_type_t* target_unit_type = target_unit_type_id == UnitTypes::None ? nullptr : get_unit_type(target_unit_type_id);
 		Orders order_id = (Orders)r.template get<uint8_t>();
@@ -1114,8 +1117,8 @@ struct action_functions: state_functions {
 	}
 
 	template<typename reader_T>
-	bool read_action_unload(int owner, reader_T&& r) {
-		unit_t* target = get_unit(unit_id(r.template get<uint16_t>()));
+	bool read_action_unload(int owner, reader_T&& r, bool wide = false) {
+		unit_t* target = read_action_unit(r, wide);
 		return action_unload(owner, target);
 	}
 
@@ -1347,8 +1350,16 @@ struct action_functions: state_functions {
 	template<typename reader_T>
 	bool read_action(int owner, reader_T&& r) {
 		int action_id = r.template get<uint8_t>();
-		on_action(owner, action_id);
+		// The UI's APM and acknowledgement hooks use the original command IDs.
+		static const int classic_ids[] = {20, 21, 41, 9, 10, 11};
+		on_action(owner, action_id >= 0x60 && action_id <= 0x65 ? classic_ids[action_id - 0x60] : action_id);
 		switch (action_id) {
+		case 0x60: return read_action_default_order(owner, r, true);
+		case 0x61: return read_action_order(owner, r, true);
+		case 0x62: return read_action_unload(owner, r, true);
+		case 0x63: return read_action_select(owner, r, true);
+		case 0x64: return read_action_shift_select(owner, r, true);
+		case 0x65: return read_action_deselect(owner, r, true);
 		case 9:
 			return read_action_select(owner, r);
 		case 10:
