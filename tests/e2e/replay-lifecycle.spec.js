@@ -1,4 +1,4 @@
-const { test, expect } = require("@playwright/test");
+const { test, expect } = require("./fixtures");
 const path = require("node:path");
 
 const replayPath = path.join(__dirname, "../fixtures/elimination-0145.rep");
