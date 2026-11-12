@@ -1,8 +1,7 @@
-const { test, expect } = require("@playwright/test");
+const { test, expect, remoteReplayUrl } = require("./fixtures");
 const fs = require("fs/promises");
 
 const defaultReplayPath = "/workspace/replays/PurpleWave vs Monster Tau Cross CTR_41B69CB9.rep";
-const basilReplayUrl = "https://data.basil-ladder.net/bots/Brainiac/Brainiac%20vs%20adias%20Roadrunner%20CTR_95D142E3.rep";
 
 async function createReplayDrop(page, replayPath = defaultReplayPath) {
   const replayName = replayPath.split("/").pop();
@@ -32,9 +31,12 @@ async function loadReplay(page, replayPath = defaultReplayPath) {
 
 test("footer geometry has no dead gap above/below the playback bar and no bottom gap under production", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
-  await page.goto(`/?rep=${encodeURIComponent(basilReplayUrl)}`);
+  await page.goto(`/?rep=${encodeURIComponent(remoteReplayUrl)}`);
   await page.waitForSelector("#rv_modal", { state: "hidden", timeout: 30000 });
   await page.waitForFunction(() => typeof _replay_get_value === "function" && _replay_get_value(4) > 0, null, { timeout: 120000 });
+
+  await page.waitForSelector("#production_tab_content1 .prod_prog_bar");
+  await page.evaluate(() => _replay_set_value(1, 1));
 
   const timerBox = await page.locator(".rv-rc-timer").boundingBox();
   const progressBox = await page.locator(".rv-rc-progress-bar").boundingBox();
@@ -63,7 +65,7 @@ test("footer geometry has no dead gap above/below the playback bar and no bottom
 test("frame query parameter seeds replay catch-up and the permalink button copies the current replay URL with frame", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const requestedFrame = 10;
-  await page.goto(`/?rep=${encodeURIComponent(basilReplayUrl)}&frame=${requestedFrame}`);
+  await page.goto(`/?rep=${encodeURIComponent(remoteReplayUrl)}&frame=${requestedFrame}`);
   await page.waitForSelector("#rv_modal", { state: "hidden", timeout: 30000 });
   await page.waitForFunction(() => typeof _replay_get_value === "function" && _replay_get_value(4) > 0, null, { timeout: 120000 });
   await expect
@@ -91,7 +93,7 @@ test("frame query parameter seeds replay catch-up and the permalink button copie
     };
   });
   const copiedUrl = new URL(copiedState.copied);
-  expect(copiedUrl.searchParams.get("rep")).toBe(basilReplayUrl);
+  expect(copiedUrl.searchParams.get("rep")).toBe(remoteReplayUrl);
   expect(Number(copiedUrl.searchParams.get("frame"))).toBe(copiedState.frame);
   expect(copiedState.alertText).toBe("Link copied to clipboard");
   expect(copiedState.alertVisible).toBe(true);
@@ -107,7 +109,7 @@ test("persisted overall volume state is reflected by both the footer mute button
     });
   });
 
-  await page.goto(`/?rep=${encodeURIComponent(basilReplayUrl)}`);
+  await page.goto(`/?rep=${encodeURIComponent(remoteReplayUrl)}`);
   await page.waitForSelector("#rv_modal", { state: "hidden", timeout: 30000 });
   await page.waitForFunction(() => typeof _replay_get_value === "function" && _replay_get_value(4) > 0, null, { timeout: 120000 });
 

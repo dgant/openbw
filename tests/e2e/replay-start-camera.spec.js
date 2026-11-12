@@ -1,4 +1,4 @@
-const { test, expect } = require("@playwright/test");
+const { test, expect } = require("./fixtures");
 const path = require("node:path");
 
 const tauReplay = "/workspace/replays/PurpleWave vs Monster Tau Cross CTR_41B69CB9.rep";

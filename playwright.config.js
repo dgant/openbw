@@ -1,4 +1,5 @@
 const { defineConfig } = require("playwright/test");
+const browserName = process.env.OPENBW_TEST_BROWSER || "chromium";
 
 module.exports = defineConfig({
   testDir: "./tests/e2e",
@@ -7,17 +8,17 @@ module.exports = defineConfig({
   workers: 1,
   use: {
     baseURL: "http://127.0.0.1:8080",
-    browserName: "chromium",
+    browserName,
     headless: true,
     launchOptions: {
-      executablePath: "/usr/bin/chromium",
-      args: [
+      executablePath: browserName === "chromium" ? "/usr/bin/chromium" : undefined,
+      args: browserName === "chromium" ? [
         "--no-sandbox",
         "--disable-dev-shm-usage",
         "--disable-background-timer-throttling",
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding"
-      ]
+      ] : []
     }
   }
 });

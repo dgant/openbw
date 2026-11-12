@@ -1,8 +1,8 @@
 #ifndef BWGAME_REPLAY_SAVER_H
 #define BWGAME_REPLAY_SAVER_H
 
-#include "bwgame.h"
-#include "replay.h"
+#include <bwgame.h>
+#include <replay.h>
 
 namespace bwgame {
 
