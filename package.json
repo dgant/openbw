@@ -2,8 +2,9 @@
   "name": "openbw-dev",
   "private": true,
   "scripts": {
-    "test:source": "node tests/source/can-place-building-creep-visibility.test.js && node --test tests/source/default-build.test.js tests/source/sprite-player-colors.test.js tests/source/replay-player-colors.test.js tests/source/replay-start-camera.test.js",
-    "test:e2e": "playwright test"
+    "test:source": "node tests/source/can-place-building-creep-visibility.test.js && node --test tests/source/default-build.test.js tests/source/engine-includes.test.js tests/source/sprite-player-colors.test.js tests/source/replay-player-colors.test.js tests/source/replay-start-camera.test.js tests/source/observer-fight-hold.test.js",
+    "test:e2e": "playwright test",
+    "test:remastered": "node --test tests/source/remastered-replay.test.js tests/source/engine-parity.test.js && playwright test tests/e2e/replay-formats.spec.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.53.2"

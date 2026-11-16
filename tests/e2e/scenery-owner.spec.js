@@ -1,4 +1,4 @@
-const { test, expect } = require("@playwright/test");
+const { test, expect } = require("./fixtures");
 const path = require("node:path");
 
 test("Roadkill scenery with owner 12 renders without stopping replay playback", async ({ page }) => {

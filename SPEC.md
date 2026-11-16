@@ -1,5 +1,38 @@
 # Replay Viewer Build Specification
 
+## Replay Engines
+
+- Classic 1.16.1 and Remastered replays use independently maintained engines
+  under `engines/classic/` and `engines/remastered/`. Both build directly from
+  checked-in sources with the shared viewer and common headers.
+- Both engines use the existing C++ toolchain. Dependency or licensing changes
+  require explicit approval.
+- Remastered is a minimal local fork of the pre-Remastered engine in this
+  repository, not an import from another engine fork. Differences must be
+  required by Remastered formats or demonstrated simulation behavior.
+- Replay decoding reads compression and limits directly. Native command and
+  map loaders handle wider unit IDs and extended string offsets without an
+  intermediate replay format or lossy map conversion.
+- Rendering, notifications, audio, and controls follow the same paths wherever
+  their behavior is not format-specific. Classic inputs with classic data must
+  produce matching simulation states and notifications in either engine.
+- Each engine has its own WASM instance and terrain data. Switching formats
+  stops the old main loop and removes its input handlers before creating the
+  replacement. Settings and the shared viewer controls remain available.
+- The renderer supports the extended terrain indices used by Remastered maps.
+- Native tests must check independent reference states and rewind determinism,
+  not merely successful loading or completion. Browser tests cover both formats,
+  switching, playback controls, URL seeks, and desktop/mobile rendering.
+- Invalid or unsupported replays must stop cleanly and leave another replay
+  loadable without refreshing. Both engines share this error boundary.
+- The snapshot cache must respect heap pressure, not only a snapshot count,
+  while retaining the first and latest checkpoints for seeking.
+- Release validation must distinguish simulation fidelity from completion and
+  cover repeated loads, long games, observers, and failure recovery. Built-in
+  AI and unimplemented custom-map triggers are outside supported playback.
+
+## Build Outputs
+
 The default `scripts/build_replay_viewer.sh` command builds the OpenBW browser
 runtime into the sibling `openbw-replay-viewer/docs/v1.4` directory, then packages
 the maintained `openbw-replay-viewer/desktop` application from that same `docs`
@@ -8,9 +41,8 @@ requires the packaged web assets to match the local web assets byte for byte.
 
 The Windows `.rep` association points to
 `openbw-replay-viewer/desktop/dist/replay-viewer-desktop/replay-viewer-desktop-win_x64.exe`.
-The executable and `resources.neu` must remain together. Subsequent builds replace
-that output in place. There must be no independently maintained desktop copy in
-the workspace's former `replay-viewer-desktop` directory.
+The executable and `resources.neu` must remain together. Builds replace that
+output in place; do not maintain a separate desktop copy.
 
 ## Scenery rendering
 

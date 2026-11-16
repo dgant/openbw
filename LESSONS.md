@@ -1,42 +1,73 @@
-# Lessons
+# Engineering Lessons
 
-- Authentication differs between the host and container: the Windows `gh`
-  keyring OAuth login can create upstream cross-fork pull requests, while the
-  fine-grained `.env` token used in the container was rejected for that operation.
-  Check the previously successful workflow and `gh auth status` before concluding
-  the task needs new credentials. Keep credential values out of logs and source.
+## Engine Compatibility
 
-- The 2026-11-06 Remastered integration was reverted because it imported
-  LGPLv3-derived code without approval. Check source provenance and licensing
-  before importing code, including C++ patches distributed by a Go project.
-  Use the requested direct C++ OpenBW fork and narrow upstream changes instead
-  of adding another language or adapting an independently licensed port.
+- Remastered terrain affects simulation outcomes. Use its extended terrain
+  tables and compare independent states throughout the replay; reaching the
+  last frame does not establish fidelity.
+- Reference comparisons must use the same unit population. The saved reference
+  excludes transported units and turrets, but includes workers in refineries.
+- Check provenance and licensing before incorporating third-party source.
+- Audit the behavioral diff between engine variants. Separate directories and
+  successful replay completion do not establish shared-feature parity.
+- Unit-ID generation bits must not be discarded when reading wider replay
+  commands. Keep the ID layout state-local so separate simulations cannot
+  change each other's interpretation.
+- Remastered observer IDs can carry chat without belonging to a player slot.
+  Consume those messages without assigning them to a player or counting APM.
+- An empty command section can be omitted or represented by a legacy empty
+  frame. Do not consume the following map-length section in the omitted case.
 
-- The `basil-ladder/openbw` fog-of-war branch merges cleanly into the current `openbw` master.
-- The historical replay-viewer Emscripten build no longer works with the original `1.38.13` SDK tag because that exact target is no longer in the current `emsdk` manifest.
-- `emsdk` `1.38.48` can build the web runtime, but the SDL_mixer port currently fails during configure in this container. The local build script therefore disables SDL mixer so the viewer remains buildable while audio is investigated separately.
-- With `emsdk` `1.38.48`, the generated browser runtime needs `callMain` exported explicitly and the wrapper must use `UTF8ToString` plus direct `_malloc`/`Module.HEAPU8` buffer copies instead of deprecated `Pointer_stringify` and `allocate(...)` usage.
-- Firefox can snap native `<input type="range">` controls back to their previous value after a drag if a document/window/body `mouseup` handler calls `preventDefault()`. Reproduce range-drag bugs in stock Firefox with a real driver, not only Playwright synthetic events, and avoid relying on the native drag path when global mouse handlers are present.
-- Fog-of-war `ui.vision` is derived from both the selected player mask and the replay state's currently occupied players. Recompute it after replay seeks/restores; otherwise reaching a terminal state can leave a rewound replay with stale effective vision even though the selection UI is still enabled.
-- Loading replay data changes the engine synchronously, but a paused or idle browser loop may not repaint or refresh the footer before the load callback returns. Publish frame-zero UI state and force one static redraw as part of the load transaction.
+## Rendering and Playback
 
-- Updating the web runtime does not update Neutralino desktop resources automatically. Keep desktop packaging in the default build and verify bundled assets against the local web tree. Windows file associations must point to that maintained output, not a duplicate release folder.
+- Player controller state is not replay identity. Capture the initial roster
+  for forced colors; use sprite ownership for units and minimap markers after
+  elimination transfers simulation ownership to neutral.
+- Scenery can have owners outside player slots 0-11. Normalize rendering palette
+  lookups without changing simulation ownership. A white canvas can indicate a
+  renderer exception; inspect logs and pan to the affected sprite in tests.
+- Recompute fog-of-war `ui.vision` after seeks and restores. It depends on both
+  the selected vision mask and the current replay state's occupied players.
+- Render the actual terminal frame. Temporarily restoring an earlier snapshot
+  can discard camera input and cause snap-back, even with observation paused.
+- Publish frame-zero UI and redraw during replay loading. A paused or idle main
+  loop will not necessarily refresh the canvas or footer after the load callback.
+- Reapply the initial camera center after deferred zoom restoration, then redraw:
+  resizing clears the canvas, and preserving a clamped center can shift the view.
+- A snapshot-count limit is not a memory budget. Trim the shared snapshot cache
+  under WASM heap pressure, leaving room for the working simulation and redraws.
+  Use 64-bit distance scores when selecting snapshots to evict in long replays.
+- Catch loading and simulation exceptions at the shared viewer boundary. Stop
+  the failed engine and audio, display a readable error, and preserve a working
+  replay picker. Test recovery after a prior successful load as well as startup.
 
-- Map scenery can carry an owner outside player slots 0–11 (Roadkill has owner 12). Normalize the palette lookup to neutral before calling player-color overrides, without changing simulation ownership. A white canvas can be a C++ `array::at` exception during rendering, not damaged MPQs. Regressions must pan to the offending sprite: another initial camera position can hide the bug.
+## Regression Testing
 
-- Player controller state is not replay identity: elimination changes occupied slots to user-left and transfers units to neutral, while sprites retain their visual owners. Capture the initial participant roster for color assignment and use sprite ownership for minimap colors too.
-- Do not repair terminal-frame colors by temporarily restoring an earlier simulation snapshot. The old path also processed input, then restored the previous camera position, producing snap-back even with the observer paused. Render the real final state with stable display identities. Tests should check that final state's colors and input response, not require a pixel-identical copy of the preceding frame.
-- For initial-status regressions, freeze the first URL load at frame zero and assert both field content and visibility. In the October 2026 report, the current first-load path and actual PurpleBench URL passed this check; the existing replacement-while-paused test alone did not establish that.
-- Startup camera tests need known replay starting coordinates away from the
-  origin, and must freeze playback so automatic observation cannot mask a
-  missing initial position. Reapply the starting center after deferred saved
-  zoom restoration: preserving an already map-clamped center can offset the
-  final zoomed view.
-- Camera coordinates alone do not prove a visible startup frame. Deferred zoom
-  restoration resizes and clears the canvas after the first static redraw; a
-  paused replay needs another static redraw after that resize. Check rendered
-  pixels and inspect screenshots, not just camera state.
-- Public ladder replay URLs can expire (the Brainiac/Roadrunner startup fixture
-  returned HTTP 404). Intercept the external download with stable local replay
-  bytes for URL-loading regressions; do not confuse archive availability with
-  a viewer startup failure.
+- Freeze playback to test initial camera and status-bar state. Test first URL
+  loads separately from replacing a paused replay, and check pixels and field
+  visibility as well as engine coordinates and values.
+- Direct test calls that set a seek target must resume the paused idle main loop.
+  Real playback controls handle this themselves.
+- For brief replay events, seek while paused to a known preceding frame, then
+  resume at normal speed and capture the event in the browser animation loop.
+  Detect the event independently of the expected behavior, then assert the
+  behavior; polling at high playback speed can miss an otherwise correct result.
+- Use local MPQs and intercepted replay downloads in browser tests. Public replay
+  URLs can expire; network failures should not masquerade as engine regressions.
+- Test camera score ties and hold decisions with controlled native state. A
+  fixed replay timestamp does not guarantee a combat dropout or an equal-score
+  offscreen candidate after camera timing and viewport changes.
+- GCC AddressSanitizer PIE binaries can fail during sanitizer initialization in
+  the WSL container, even with an empty `main()`. Use `-fno-pie -no-pie` for
+  native sanitizer test binaries; do not change production flags or hide reports.
+- Test range drags in stock Firefox with real input. Global `mouseup` handlers
+  calling `preventDefault()` can make native range values snap back in ways
+  synthetic Playwright events do not reproduce.
+
+## Build Integration
+
+- Emscripten 1.38.48 requires explicit `callMain` export. Use `UTF8ToString` and
+  `_malloc`/`Module.HEAPU8`, not deprecated string and allocation helpers.
+- Disabling SDL_mixer does not disable game audio: the browser uses Web Audio.
+- Web compilation alone does not refresh Neutralino resources. Package desktop
+  assets in the default build and verify byte-for-byte equality with `docs/`.

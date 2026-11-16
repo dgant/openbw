@@ -1,4 +1,4 @@
-const { test, expect } = require("@playwright/test");
+const { test, expect, remoteReplayUrl } = require("./fixtures");
 const fs = require("fs/promises");
 
 const defaultReplayName = "PurpleWave vs Monster Tau Cross CTR_41B69CB9.rep";
@@ -6,7 +6,6 @@ const defaultReplayPath = `/workspace/replays/${defaultReplayName}`;
 const stardustReplayPath = "/workspace/replays/PurpleWave vs Stardust Destination CTR_90FB48A3.rep";
 const willyTReplayPath = "/workspace/replays/PurpleWave vs WillyT Icarus CTR_20B3F39.rep";
 const nukeReplayPath = "/workspace/replays/Hannes Bredberg vs VOID La Mancha1.1 (Nukes).rep";
-const basilReplayUrl = "https://data.basil-ladder.net/bots/Brainiac/Brainiac%20vs%20adias%20Roadrunner%20CTR_95D142E3.rep";
 
 async function createReplayDrop(page, replayPath = defaultReplayPath) {
   const replayName = replayPath.split("/").pop();
@@ -219,13 +218,7 @@ test("boots with bundled MPQs and starts a replay from drag and drop", async ({ 
 test("remote replay loaded via rep query keeps advancing after startup", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
-  // Public ladder archives expire; exercise the URL-loading path with stable bytes.
-  await page.route(basilReplayUrl, route => route.fulfill({
-    path: defaultReplayPath,
-    contentType: "application/octet-stream",
-    headers: { "access-control-allow-origin": "*" }
-  }));
-  await loadRemoteReplay(page, basilReplayUrl);
+  await loadRemoteReplay(page, remoteReplayUrl);
   await expectStartupPlaybackToAdvance(page);
   assertAllCleanLogs(logs);
 });
@@ -308,7 +301,7 @@ test("fast-forward catch-up advances many sim frames while capping visual presen
 test("rep query boot keeps the homepage controls hidden until the viewer chooses a loading state", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
-  await page.goto(`/?rep=${encodeURIComponent(basilReplayUrl)}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`/?rep=${encodeURIComponent(remoteReplayUrl)}`, { waitUntil: "domcontentloaded" });
   const initialState = await page.evaluate(() => {
     const copy = document.querySelector(".pregame-drop-copy");
     const notes = document.querySelector(".pregame-notes");
@@ -510,11 +503,11 @@ test("paused replay keeps a visible scrubber track and dragging it resumes seeki
   assertAllCleanLogs(logs);
 });
 
-test("remote BASIL replay advances through the reported 21:18 local stall point", async ({ page }) => {
+test("URL-loaded replay keeps advancing during a long forward seek", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
   await page.setViewportSize({ width: 1600, height: 900 });
-  await loadRemoteReplayAtFrame(page, basilReplayUrl, 30500);
+  await loadRemoteReplayAtFrame(page, remoteReplayUrl, 30500);
   await page.evaluate(() => {
     _replay_set_value(1, 0);
     _replay_set_value(0, 1);
@@ -547,11 +540,11 @@ test("remote BASIL replay advances through the reported 21:18 local stall point"
   assertAllCleanLogs(logs);
 });
 
-test("remote BASIL replay can scrub to the end without trapping", async ({ page }) => {
+test("URL-loaded replay can scrub to the end without trapping", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
   await page.setViewportSize({ width: 1600, height: 900 });
-  await loadRemoteReplayAtFrame(page, basilReplayUrl, 43000);
+  await loadRemoteReplayAtFrame(page, remoteReplayUrl, 43000);
   await page.evaluate(() => {
     const endFrame = _replay_get_value(4);
     _replay_set_value(3, endFrame);
@@ -1172,7 +1165,7 @@ test("zoom out clamps to a safe render size on large viewports", async ({ page }
   assertCleanLogs(logs);
 });
 
-test.fixme("manual camera movement suppresses auto camera for three seconds", async ({ page }) => {
+test("manual camera movement suppresses auto camera for three seconds", async ({ page }) => {
   test.setTimeout(180000);
   const logs = await createLogCollectors(page);
 
@@ -1190,7 +1183,8 @@ test.fixme("manual camera movement suppresses auto camera for three seconds", as
     _ui_set_screen_center_manual(Math.round(Module.canvas.width / 2), Math.round(Module.canvas.height / 2));
   });
 
-  await page.waitForTimeout(1500);
+  expect(await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()).manualOverrideActive)).toBe(true);
+  await page.waitForTimeout(500);
 
   const after = await page.evaluate(() => ({
     x: _ui_get_screen_pos(0),
@@ -1201,14 +1195,17 @@ test.fixme("manual camera movement suppresses auto camera for three seconds", as
   expect(Math.abs(after.y - 0)).toBeLessThanOrEqual(2);
   expect(Math.abs(before.x - after.x) + Math.abs(before.y - after.y)).toBeGreaterThan(10);
 
-  await page.evaluate(() => _replay_set_value(1, 0));
-  await page.waitForTimeout(1500);
+  await forceClick(page, "#rv-rc-play");
+  await page.waitForTimeout(1000);
   const duringHold = await page.evaluate(() => ({
     x: _ui_get_screen_pos(0),
     y: _ui_get_screen_pos(1)
   }));
   expect(Math.abs(duringHold.x - after.x)).toBeLessThanOrEqual(2);
   expect(Math.abs(duringHold.y - after.y)).toBeLessThanOrEqual(2);
+  expect(await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()).manualOverrideActive)).toBe(true);
+  await expect.poll(() => page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()).manualOverrideActive), { timeout: 5000 }).toBe(false);
+  await expect.poll(() => page.evaluate(() => _ui_get_screen_pos(0) + _ui_get_screen_pos(1)), { timeout: 5000 }).toBeGreaterThan(10);
 
   assertCleanLogs(logs);
 });
@@ -1872,15 +1869,21 @@ test("settings modal uses audio and video tabs with immediate persistence", asyn
     });
   await expect
     .poll(() =>
-      page.evaluate(() => ({
-        inputWidth: parseFloat(getComputedStyle(document.querySelector("#export-width")).maxWidth),
-        unitOffset: parseFloat(getComputedStyle(document.querySelector("#export_settings .input-group .input-group-label:last-child")).marginLeft),
-        unitWidth: parseFloat(getComputedStyle(document.querySelector("#export_settings .input-group .input-group-label:last-child")).width),
-        valueFits: document.querySelector("#export-width").scrollWidth <= document.querySelector("#export-width").clientWidth
-      }))
+      page.evaluate(() => {
+        const input = document.querySelector("#export-width");
+        const style = getComputedStyle(input);
+        const context = document.createElement("canvas").getContext("2d");
+        context.font = `${style.fontSize} ${style.fontFamily}`;
+        const contentWidth = input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+        return {
+          sevenCharacterWidth: Math.abs(parseFloat(style.maxWidth) - 7 * context.measureText("0").width) < 1,
+          unitOffset: parseFloat(getComputedStyle(document.querySelector("#export_settings .input-group .input-group-label:last-child")).marginLeft),
+          valueFits: input.scrollWidth <= input.clientWidth && context.measureText(input.value).width < contentWidth
+        };
+      })
     )
     .toMatchObject({
-      inputWidth: 71.2578,
+      sevenCharacterWidth: true,
       unitOffset: 6.4,
       valueFits: true
     });
@@ -1903,7 +1906,7 @@ test("timestamped link button is hidden for local replays and hidden again after
   await loadReplay(page);
   await expect(page.locator("#rv-rc-copy-link")).toBeHidden();
 
-  await loadRemoteReplay(page, basilReplayUrl);
+  await loadRemoteReplay(page, remoteReplayUrl);
   await expect(page.locator("#rv-rc-copy-link")).toBeVisible();
 
   await page.setInputFiles("#select_rep_file", defaultReplayPath);
@@ -1915,21 +1918,23 @@ test("timestamped link button is hidden for local replays and hidden again after
   assertAllCleanLogs(logs);
 });
 
-test("viewport export buttons place settings/open on the top row and link/clip on the bottom row with link left of clip", async ({ page }) => {
+test("viewport export buttons place open/download above link/clip and settings below clip", async ({ page }) => {
   const logs = await createLogCollectors(page);
 
-  await loadRemoteReplay(page, basilReplayUrl);
+  await loadRemoteReplay(page, remoteReplayUrl);
   const buttonPositions = await page.evaluate(() =>
-    ["rv-rc-copy-link", "rv-rc-export", "rv-rc-open-replay", "rv-rc-export-settings"].map((id) => {
+    ["rv-rc-copy-link", "rv-rc-export", "rv-rc-open-replay", "rv-rc-download-replay", "rv-rc-export-settings"].map((id) => {
       const rect = document.getElementById(id).getBoundingClientRect();
       return { id, left: Math.round(rect.left), top: Math.round(rect.top) };
     })
   );
   const positionsById = Object.fromEntries(buttonPositions.map((position) => [position.id, position]));
-  expect(positionsById["rv-rc-export-settings"].top).toBe(positionsById["rv-rc-open-replay"].top);
+  expect(positionsById["rv-rc-download-replay"].top).toBe(positionsById["rv-rc-open-replay"].top);
   expect(positionsById["rv-rc-copy-link"].top).toBe(positionsById["rv-rc-export"].top);
-  expect(positionsById["rv-rc-export-settings"].top).toBeLessThan(positionsById["rv-rc-copy-link"].top);
-  expect(positionsById["rv-rc-export-settings"].left).toBeLessThan(positionsById["rv-rc-open-replay"].left);
+  expect(positionsById["rv-rc-open-replay"].top).toBeLessThan(positionsById["rv-rc-copy-link"].top);
+  expect(positionsById["rv-rc-export-settings"].top).toBeGreaterThan(positionsById["rv-rc-export"].top);
+  expect(positionsById["rv-rc-export-settings"].left).toBe(positionsById["rv-rc-export"].left);
+  expect(positionsById["rv-rc-open-replay"].left).toBeLessThan(positionsById["rv-rc-download-replay"].left);
   expect(positionsById["rv-rc-copy-link"].left).toBeLessThan(positionsById["rv-rc-export"].left);
 
   const chooserPromise = page.waitForEvent("filechooser");
@@ -2141,7 +2146,7 @@ test("nuclear launch alert increments the matching acknowledgement sound when th
   assertCleanLogs(logs);
 });
 
-test.fixme("first-player acknowledgement sounds actually trigger during playback", async ({ page }) => {
+test("first-player acknowledgement sounds actually trigger during playback", async ({ page }) => {
   test.setTimeout(180000);
   const logs = await createLogCollectors(page, { disableAudio: false });
 
@@ -2806,7 +2811,7 @@ test("fast-forward overlay shows the target time while catch-up is in progress",
   assertCleanLogs(logs);
 });
 
-test.fixme("late-game camera scoring does not let stale offscreen idle scores beat an active viewport fight", async ({ page }) => {
+test("late-game camera scoring does not let stale offscreen idle scores beat an active viewport fight", async ({ page }) => {
   test.setTimeout(180000);
   const logs = await createLogCollectors(page);
 
@@ -2834,39 +2839,6 @@ test.fixme("late-game camera scoring does not let stale offscreen idle scores be
     .not.toBeNull();
   expect(summary.bestViewport.score).toBeGreaterThan(100);
   expect(summary.bestOffscreen.attention || summary.bestOffscreen.score <= 100).toBe(true);
-
-  assertCleanLogs(logs);
-});
-
-test.fixme("late-game camera retains the current fight through brief attention dropouts", async ({ page }) => {
-  test.setTimeout(180000);
-  const logs = await createLogCollectors(page);
-
-  await loadReplay(page, nukeReplayPath, "Hannes");
-  const startFrame = Math.round((31 * 60 + 5) * 1000 / 42);
-  const endFrame = Math.round((31 * 60 + 13) * 1000 / 42);
-  await page.evaluate((frame) => {
-    _replay_set_value(3, frame);
-    _replay_set_value(0, 128);
-    _replay_set_value(1, 0);
-  }, startFrame);
-  await page.waitForFunction((frame) => _replay_get_value(2) >= frame, startFrame, { timeout: 120000 });
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() => {
-          const summary = JSON.parse(Module.get_observer_debug_summary());
-          return summary.frame >= Math.round((31 * 60 + 5) * 1000 / 42) ? summary.viewportAttentionCount : 0;
-        }),
-      { timeout: 30000 }
-    )
-    .toBeGreaterThan(0);
-
-  await page.waitForFunction((frame) => _replay_get_value(2) >= frame, endFrame, { timeout: 120000 });
-  const summary = await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()));
-  expect(summary.frame).toBeGreaterThanOrEqual(endFrame);
-  expect(summary.viewportAttentionCount).toBe(0);
-  expect(summary.retainViewportFight).toBe(true);
 
   assertCleanLogs(logs);
 });
@@ -3042,33 +3014,43 @@ test("visible falling missiles center on their landing point instead of the miss
   test.setTimeout(180000);
   const logs = await createLogCollectors(page);
 
-  await loadReplay(page, nukeReplayPath, "Hannes");
+  await loadReplay(page, nukeReplayPath);
+  // This missile descends during frames 44300-44369, toward (2087, 3771).
+  // Seek while paused, then observe normal playback rather than sampling at 128x.
+  const firstFallingFrame = 44300;
   await page.evaluate((frame) => {
+    _replay_set_value(1, 1);
+    _replay_set_value(0, 1);
     _replay_set_value(3, frame);
-    _replay_set_value(0, 128);
-    _replay_set_value(1, 0);
-  }, 56000);
-  await page.waitForFunction((frame) => _replay_get_value(2) >= frame, 56000, { timeout: 120000 });
+    resume_viewer_main_loop();
+  }, firstFallingFrame - 1);
+  await page.waitForFunction((frame) => _replay_get_value(2) === frame, firstFallingFrame - 1, { timeout: 120000 });
+  expect(await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()).nukeState.hasVisibleFallingNuke)).toBe(false);
 
-  let summary = null;
-  const searchDeadline = Date.now() + 90000;
-  while (Date.now() < searchDeadline) {
-    const value = await page.evaluate(() => JSON.parse(Module.get_observer_debug_summary()));
-    if (value.nukeState.hasVisibleFallingNuke && (value.actualApplyCenterReason === 1 || value.actualApplyCenterReason === 2)) {
-      summary = value;
-      break;
-    }
-    await page.waitForTimeout(250);
-  }
-  expect(summary).not.toBeNull();
+  await page.locator("#rv-rc-play").click();
+  const captured = await page.waitForFunction(() => {
+    const value = JSON.parse(Module.get_observer_debug_summary());
+    if (!value.nukeState.hasVisibleFallingNuke) return null;
+    _replay_set_value(1, 1);
+    return value;
+  }, null, { timeout: 10000, polling: "raf" });
+  const summary = await captured.jsonValue();
+  await captured.dispose();
 
+  expect(summary.frame).toBeGreaterThanOrEqual(firstFallingFrame);
+  expect(summary.frame).toBeLessThan(firstFallingFrame + 70);
+  expect(summary.autoObserverEnabled).toBe(true);
+  expect(summary.manualOverrideActive).toBe(false);
+  expect(summary.actualApplyCenterReason).toBe(1);
+  expect([summary.nukeState.visibleFallingNukeX, summary.nukeState.visibleFallingNukeY]).toEqual([2087, 3771]);
   expect(summary.nukeState.holdPositionX).toBe(summary.nukeState.visibleFallingNukeX);
   expect(summary.nukeState.holdPositionY).toBe(summary.nukeState.visibleFallingNukeY);
   expect(summary.actualApplyCenterInputX).toBe(summary.nukeState.visibleFallingNukeX);
   expect(summary.actualApplyCenterInputY).toBe(summary.nukeState.visibleFallingNukeY);
   expect(summary.nukeState.visibleFallingNukeSpriteX !== summary.nukeState.visibleFallingNukeX || summary.nukeState.visibleFallingNukeSpriteY !== summary.nukeState.visibleFallingNukeY).toBe(true);
 
-  assertCleanLogs(logs);
+  await page.screenshot({ path: "test-results/visible-missile-camera.png" });
+  assertAllCleanLogs(logs);
 });
 
 test("high-speed early-game observer does not oscillate between map edges", async ({ page }) => {
@@ -3099,7 +3081,7 @@ test("high-speed early-game observer does not oscillate between map edges", asyn
   assertCleanLogs(logs);
 });
 
-test.fixme("WillyT replay keeps advancing at 128x through the reported 7:38 freeze point", async ({ page }) => {
+test("WillyT replay keeps advancing at 128x through the reported 7:38 freeze point", async ({ page }) => {
   test.setTimeout(180000);
   const logs = await createLogCollectors(page);
 
@@ -3121,7 +3103,7 @@ test.fixme("WillyT replay keeps advancing at 128x through the reported 7:38 free
   assertCleanLogs(logs);
 });
 
-test.fixme("Terran building completion plays the SCV update acknowledgement sound for the first player", async ({ page }) => {
+test("Terran building completion plays the SCV update acknowledgement sound for the first player", async ({ page }) => {
   test.setTimeout(180000);
   const logs = await createLogCollectors(page, { disableAudio: false });
 

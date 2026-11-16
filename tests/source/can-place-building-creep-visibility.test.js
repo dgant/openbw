@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 
-const source = fs.readFileSync(path.join(__dirname, "..", "..", "bwgame.h"), "utf8");
+const source = fs.readFileSync(path.join(__dirname, "..", "..", "engines", "classic", "bwgame.h"), "utf8");
 
 assert(
   !source.includes("bool require_visibility = !check_invisible_tiles || is_nydus_exit;"),

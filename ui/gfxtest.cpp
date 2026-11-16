@@ -1,6 +1,7 @@
 
 #ifdef EMSCRIPTEN
 #include <emscripten.h>
+#include <malloc.h>
 #endif
 
 #include <iostream>
@@ -59,6 +60,15 @@ extern bool any_replay_loaded;
 void free_memory();
 constexpr size_t max_saved_states = 96;
 
+bool replay_heap_under_pressure() {
+#ifdef EMSCRIPTEN
+	// Leave 64 MiB of the fixed WASM heap for simulation, copies and rendering.
+	return mallinfo().uordblks > 128 * 1024 * 1024;
+#else
+	return false;
+#endif
+}
+
 struct main_t {
 	ui_functions ui;
 	bool auto_observer_enabled = true;
@@ -115,6 +125,11 @@ struct main_t {
 	int fps_counter = 0;
 
 	a_map<int, std::unique_ptr<saved_state>> saved_states;
+
+	void trim_saved_states() {
+		while (saved_states.size() > 2 &&
+			(saved_states.size() > max_saved_states || replay_heap_under_pressure())) free_memory();
+	}
 
 	void reset() {
 		saved_states.clear();
@@ -359,6 +374,7 @@ struct main_t {
 			if (ui.st.current_frame == 0 || ui.st.current_frame % save_interval == 0) {
 				auto i = saved_states.find(ui.st.current_frame);
 				if (i == saved_states.end()) {
+					trim_saved_states();
 					auto v = std::make_unique<saved_state>();
 					v->st = copy_state(ui.st);
 					v->action_st = copy_state(ui.action_st, ui.st, v->st);
@@ -373,7 +389,7 @@ struct main_t {
 						new_saved_states[v.first] = std::move(v.second);
 					}
 					std::swap(saved_states, new_saved_states);
-					while (saved_states.size() > max_saved_states) free_memory();
+					trim_saved_states();
 				}
 			}
 			ui.replay_functions::next_frame();
@@ -476,13 +492,13 @@ void free_memory() {
 		auto begin = std::next(g_m->saved_states.begin());
 		auto end = std::prev(g_m->saved_states.end());
 		n = 1;
-		int best_score = std::numeric_limits<int>::max();
+		int64_t best_score = std::numeric_limits<int64_t>::max();
 		size_t i_n = 1;
 		for (auto i = begin; i != end; ++i, ++i_n) {
-			int score = 0;
+			int64_t score = 0;
 			for (auto i2 = begin; i2 != end; ++i2) {
 				if (i2 != i) {
-					int d = i2->first - i->first;
+					int64_t d = int64_t(i2->first) - i->first;
 					score += d*d;
 				}
 			}
@@ -557,6 +573,9 @@ struct js_file_reader {
 		if (filename == "StarDat.mpq") index = 0;
 		else if (filename == "BrooDat.mpq") index = 1;
 		else if (filename == "Patch_rt.mpq") index = 2;
+#ifdef OPENBW_REMASTERED_RUNTIME
+		else if (filename == "RemasteredTerrain.mpq") index = 3;
+#endif
 		else ui::xcept("js_file_reader: unknown filename '%s'", filename);
 		this->filename = std::move(filename);
 	}
@@ -1310,14 +1329,21 @@ extern "C" double player_get_value(int player, int index) {
 
 bool any_replay_loaded = false;
 
-extern "C" void load_replay(const uint8_t* data, size_t len) {
-	m->reset();
-	m->ui.load_replay_data(data, len);
-	m->capture_replay_players();
-	m->ui.set_image_data();
-	m->sync_fog_of_war();
-	m->ui.request_redraw();
-	any_replay_loaded = true;
+extern "C" int load_replay(const uint8_t* data, size_t len) {
+	any_replay_loaded = false;
+	try {
+		m->reset();
+		m->ui.load_replay_data(data, len);
+		m->capture_replay_players();
+		m->ui.set_image_data();
+		m->sync_fog_of_war();
+		m->ui.request_redraw();
+		any_replay_loaded = true;
+		return 1;
+	} catch (const std::exception& error) {
+		EM_ASM_({Module.replayError = UTF8ToString($0);}, error.what());
+		return 0;
+	}
 }
 
 #endif
@@ -1344,6 +1370,9 @@ int main() {
 	auto load_data_file = data_loading::data_files_directory("");
 #endif
 
+#ifdef OPENBW_REMASTERED_RUNTIME
+	load_data_file.mpqs.emplace_front("RemasteredTerrain.mpq");
+#endif
 	game_player player(load_data_file);
 
 	main_t m(std::move(player));
@@ -1382,7 +1411,13 @@ int main() {
 	emscripten_set_main_loop_arg([](void* ptr) {
 		if (!any_replay_loaded) return;
 		EM_ASM({js_pre_main_loop();});
-		((main_t*)ptr)->update();
+		try {
+			((main_t*)ptr)->update();
+		} catch (const std::exception& error) {
+			any_replay_loaded = false;
+			EM_ASM_({handle_replay_error(UTF8ToString($0));}, error.what());
+			return;
+		}
 		EM_ASM({js_post_main_loop();});
 	}, &m, 0, 1);
 #else
