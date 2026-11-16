@@ -7,7 +7,7 @@ const { createHash } = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "../..");
-const terrain = path.resolve(root, "../openbw-replay-viewer/docs/v1.4/remastered/terrain.mpq");
+const terrain = path.resolve(root, "../mpqs/remastered/terrain.mpq");
 let temporary;
 let binary;
 
@@ -21,7 +21,7 @@ test.before(() => {
 });
 test.after(() => { if (temporary) fs.rmSync(temporary, { recursive: true, force: true }); });
 
-test("bundled terrain matches its manifest", () => {
+test("external terrain matches its manifest", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(path.dirname(terrain), "terrain-manifest.json")));
   assert.equal(createHash("sha256").update(fs.readFileSync(terrain)).digest("hex"), manifest.sha256);
 });

@@ -97,9 +97,11 @@ test("switches classic and Remastered engines without losing controls or setting
   await page.keyboard.press("Space");
   expect(await page.evaluate(() => _replay_get_value(1))).toBe(1);
   expect(engineAssets.length).toBeGreaterThan(0);
-  for (const url of engineAssets) expect(url.origin).toBe(new URL(page.url()).origin);
+  for (const url of engineAssets) {
+    expect(url.origin).toBe(/\.mpq$/i.test(url.pathname) ? "https://assets.example.test" : new URL(page.url()).origin);
+  }
   expect(engineAssets.map(url => url.pathname)).toEqual(expect.arrayContaining([
-    "/v1.4/openbw.wasm", "/v1.4/remastered/openbw.wasm", "/v1.4/remastered/terrain.mpq"
+    "/v1.4/openbw.wasm", "/v1.4/remastered/openbw.wasm", "/mpqs/remastered/terrain.mpq"
   ]));
   expect(errors).toEqual([]);
 });
@@ -140,8 +142,8 @@ test("a failed Remastered terrain download can be retried without reloading", as
   page.on("pageerror", error => errors.push(String(error)));
   let attempts = 0;
   await page.route("**/remastered/terrain.mpq", async route => {
-    if (++attempts === 1) await route.fulfill({ status: 503, body: "Unavailable" });
-    else await route.continue();
+    if (++attempts === 1) await route.fulfill({ status: 503, headers: { "access-control-allow-origin": "*" }, body: "Unavailable" });
+    else await route.fallback();
   });
   await page.goto("/");
   await page.waitForFunction(() => mpq_data_ready);

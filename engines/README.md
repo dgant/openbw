@@ -12,8 +12,8 @@ that use only `-I .`. Shared headers must resolve engine-specific includes
 through the selected include path, not relative to the repository root.
 
 The web build sets `OPENBW_REMASTERED_RUNTIME` and enables zlib for Remastered.
-Only that target uses the extended terrain tables in the viewer's
-`docs/v1.4/remastered/terrain.mpq`, extracted from StarCraft: Remastered. The
+Only that target uses the extended terrain tables hosted by the separate MPQ
+repository at `remastered/terrain.mpq`, extracted from StarCraft: Remastered. The
 adjacent manifest records the game build and file hashes. Terrain differences
 affect simulation as well as rendering.
 

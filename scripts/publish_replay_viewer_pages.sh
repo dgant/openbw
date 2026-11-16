@@ -23,7 +23,11 @@ fi
 
 pushd "${WRAPPER_DIR}" >/dev/null
 
-git add Readme.md .gitignore docs
+git add -u -- Readme.md .gitignore docs
+if [[ -n "$(git ls-files --cached --ignored --exclude-from=.gitignore -- docs)" ]]; then
+  echo "Ignored file tracked in docs/" >&2
+  exit 1
+fi
 if ! git diff --cached --quiet; then
   git commit -m "${COMMIT_MESSAGE}"
 fi

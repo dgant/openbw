@@ -1,4 +1,5 @@
 build
 node_modules
+*.[mM][pP][qQ]
 test-results
 test-results-*/

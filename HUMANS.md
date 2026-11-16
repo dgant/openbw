@@ -121,8 +121,8 @@ and extended map string offsets.
 Fixture details are documented in `tests/fixtures/README.md`.
 Browser tests switch formats repeatedly, exercise URL loading and seek/rewind,
 and check rendered pixels and screenshots at desktop and 375x667 sizes.
-The browser server must be running on port 8080; tests use its local `/bw/`
-copies of the MPQs rather than downloading them repeatedly.
+The browser server must be running on port 8080. Tests intercept the external
+asset requests using files from the sibling `mpqs/` checkout.
 
 ## Release Verification
 
@@ -154,5 +154,5 @@ pull request. A passing test suite does not authorize merging or deployment.
 - The build writes classic `openbw.js` and `openbw.wasm` into `../openbw-replay-viewer/docs/v1.4/`, and the Remastered runtime into its `remastered/` subdirectory.
 - The wrapper HTML/JS lives in `../openbw-replay-viewer/docs/`.
 - Example replays are in `../replays/`.
-- The local viewer auto-loads MPQs from `../bw/` via the wrapper's `docs/bw` symlink.
+- The local viewer fetches MPQs from the separate MPQ site, just like the published viewer.
 - The browser build disables SDL_mixer; game audio uses the existing Web Audio backend instead.
