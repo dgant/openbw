@@ -2,6 +2,7 @@
 #define BWGAME_ACTIONS_H
 
 #include "bwgame.h"
+#include "replay_chat.h"
 
 namespace bwgame {
 
@@ -16,6 +17,7 @@ struct action_state {
 
 	size_t actions_data_position = 0;
 	int next_action_frame = 0;
+	a_vector<replay_chat_message> chat_messages;
 
 	std::array<static_vector<unit_t*, 12>, 8> selection{};
 	std::array<std::array<static_vector<unit_id, 12>, 10>, 8> control_groups{};
@@ -26,6 +28,7 @@ static inline action_state copy_state(const action_state& action_st, const state
 	r.player_id = action_st.player_id;
 	r.actions_data_position = action_st.actions_data_position;
 	r.next_action_frame = action_st.next_action_frame;
+	r.chat_messages = action_st.chat_messages;
 	r.selection = action_st.selection;
 	for (auto& v : r.selection) {
 		for (auto& v2 : v) {
@@ -1160,14 +1163,11 @@ struct action_functions: state_functions {
 		return action_siege(owner, queue);
 	}
 
+	virtual void on_replay_chat_received() {}
+
 	template<typename reader_T>
 	bool read_action_chat(int owner, reader_T&& r) {
-		auto buf = r.template get<std::array<uint8_t, 81>>();
-		a_string str;
-		for (auto& v : buf) {
-			if (v == 0) break;
-			if (v >= 32) str += (char)v;
-		}
+		if (read_replay_chat(action_st.chat_messages, st.current_frame, std::forward<reader_T>(r))) on_replay_chat_received();
 		return true;
 	}
 
