@@ -1373,15 +1373,20 @@ int main() {
 #ifdef OPENBW_REMASTERED_RUNTIME
 	load_data_file.mpqs.emplace_front("RemasteredTerrain.mpq");
 #endif
-	game_player player(load_data_file);
+	// Browser callbacks outlive callMain's stack in current Emscripten builds.
+	// Own both the MPQ reader and the UI instead of retaining stack references.
+	auto shared_data_files = std::make_shared<decltype(load_data_file)>(std::move(load_data_file));
+	game_player player(*shared_data_files);
 
-	main_t m(std::move(player));
+	static std::unique_ptr<main_t> main_instance;
+	main_instance = std::make_unique<main_t>(std::move(player));
+	auto& m = *main_instance;
 	auto& ui = m.ui;
 
-	m.ui.load_all_image_data(load_data_file);
+	m.ui.load_all_image_data(*shared_data_files);
 
-	ui.load_data_file = [&](a_vector<uint8_t>& data, a_string filename) {
-		load_data_file(data, std::move(filename));
+	ui.load_data_file = [shared_data_files](a_vector<uint8_t>& data, a_string filename) {
+		(*shared_data_files)(data, std::move(filename));
 	};
 
 	ui.init();

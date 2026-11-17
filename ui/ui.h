@@ -5,6 +5,8 @@
 #include "native_window.h"
 #include "native_window_drawing.h"
 #include "native_sound.h"
+#include "replay_chat_font.h"
+#include "replay_chat_font_data.h"
 #include <iostream>
 #include <bitset>
 
@@ -42,6 +44,7 @@ struct tileset_image_data {
 };
 
 struct image_data {
+	std::array<std::array<uint32_t, 8>, 24> chat_text_colors;
 	std::array<std::array<uint8_t, 8>, 16> player_unit_colors;
 	std::array<uint8_t, 16> player_minimap_colors;
 	std::array<uint8_t, 24> selection_colors;
@@ -168,6 +171,15 @@ void load_image_data(image_data& img, load_data_file_F&& load_data_file) {
 	for (size_t i = 0; i != 16; ++i) {
 		for (size_t i2 = 0; i2 != 8; ++i2) {
 			img.player_unit_colors[i][i2] = tunit_pcx.data[i * 8 + i2];
+		}
+	}
+	auto tfont_pcx = load_pcx_file("game/tfontgam.pcx");
+	if (tfont_pcx.width != 64 || tfont_pcx.height != 3 || tmp_data.size() < 769 || tmp_data[tmp_data.size() - 769] != 12) error("Invalid chat text palette");
+	const uint8_t* rgb = tmp_data.data() + tmp_data.size() - 768;
+	for (size_t color = 0; color != 24; ++color) {
+		for (size_t shade = 0; shade != 8; ++shade) {
+			size_t index = tfont_pcx.data[color * 8 + shade] * 3;
+			img.chat_text_colors[color][shade] = 0xff000000u | uint32_t(rgb[index + 2]) << 16 | uint32_t(rgb[index + 1]) << 8 | rgb[index];
 		}
 	}
 	auto tminimap_pcx = load_pcx_file("game/tminimap.pcx");
@@ -844,7 +856,10 @@ struct ui_functions: ui_util_functions {
 	}
 
 	a_vector<uint8_t> creep_random_tile_indices = a_vector<uint8_t>(256 * 256);
+	replay_chat_font chat_font;
+
 	void init() {
+		chat_font.load(replay_chat_font_data, sizeof(replay_chat_font_data));
 		uint32_t rand_state = (uint32_t)clock.now().time_since_epoch().count();
 		auto rand = [&]() {
 			rand_state = rand_state * 22695477 + 1;
@@ -882,6 +897,12 @@ struct ui_functions: ui_util_functions {
 
 	virtual void on_action(int owner, int action) override {
 		apm.at(owner).add_action(st.current_frame);
+	}
+
+	virtual void on_replay_chat_received() override {
+		if (is_paused || st.current_frame < replay_frame) return;
+		// Classic PrintText calls sound 0x17: Misc/Transmission.wav.
+		play_sound_internal(23, xy(), nullptr, sound_mix_group_acknowledgement, false);
 	}
 
 	size_t view_width;
@@ -1857,6 +1878,36 @@ struct ui_functions: ui_util_functions {
 		}
 	}
 
+	void draw_replay_chat() {
+		if (action_st.chat_messages.empty() || screen_width < 24 || screen_height < 24) return;
+		std::vector<replay_chat_font::line> lines;
+		int max_width = std::min(620, int(screen_width) - 20);
+		for (const auto& message : action_st.chat_messages) {
+			if (!replay_chat_visible(message, st.current_frame)) continue;
+			std::string name;
+			if (message.sender >= 0 && message.sender < 12) {
+				for (uint8_t c : replay_st.player_name[message.sender]) if (c >= 32) name += char(c);
+			}
+			if (name.empty()) name = "Observer";
+			auto wrapped = chat_font.wrap(name + ": " + std::string(message.text.c_str()), max_width);
+			lines.insert(lines.end(), wrapped.begin(), wrapped.end());
+		}
+		if (lines.empty()) return;
+		// Classic PrintText: x=10, eleven lines at y=112..272, 16px apart.
+		// Keep the same bottom alignment, clipping gracefully in tiny viewports.
+		size_t max_lines = std::min(replay_chat_max_lines, size_t((screen_height - 10) / 16));
+		if (!max_lines) return;
+		if (lines.size() > max_lines) lines.erase(lines.begin(), lines.end() - max_lines);
+		int bottom = std::min(272, int(screen_height) - chat_font.height - 10);
+		int y = bottom - int(lines.size() - 1) * 16;
+		auto* pixels = (uint32_t*)rgba_surface->lock();
+		for (const auto& line : lines) {
+			chat_font.draw(line, 10, y, pixels, rgba_surface->pitch / 4, int(screen_width), int(screen_height), img.chat_text_colors);
+			y += 16;
+		}
+		rgba_surface->unlock();
+	}
+
 	void draw_image_queue() {
 		for (auto* image : image_draw_queue) {
 			draw_new_image(image);
@@ -2262,6 +2313,7 @@ struct ui_functions: ui_util_functions {
 		indexed_surface->blit(&*rgba_surface, 0, 0);
 
 		draw_image_queue();
+		draw_replay_chat();
 
 		if (is_drag_selecting) {
 			uint32_t* data = (uint32_t*)rgba_surface->lock();
