@@ -54,6 +54,11 @@ remain unchanged.
 
 ## Replay lifecycle
 
+- Replay chat uses the recorded sender slot and game frame in both engines.
+  Seeking restores the visible messages from simulation snapshots. Messages
+  expire after 167 replay frames, not wall time. Play the transmission cue only
+  during ordinary playback, respecting the acknowledgement and master controls.
+
 - Each replay load centers the camera on the first participant's starting
   location (player-slot order), clamped to map bounds, before playback advances.
   This applies with automatic camera on or off, after restoring saved zoom,

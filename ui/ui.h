@@ -711,7 +711,12 @@ struct ui_functions: ui_util_functions {
 		if (!has_loaded_sound[id]) {
 			has_loaded_sound[id] = true;
 			a_vector<uint8_t> data;
-			load_data_file(data, "sound/" + sound_filenames[id]);
+			try {
+				load_data_file(data, "sound/" + sound_filenames[id]);
+			} catch (const exception&) {
+				if (id == transmission_sound) return;
+				throw;
+			}
 			loaded_sounds[id] = native_sound::load_wav(data.data(), data.size());
 		}
 		auto& s = loaded_sounds[id];
@@ -844,6 +849,42 @@ struct ui_functions: ui_util_functions {
 	}
 
 	a_vector<uint8_t> creep_random_tile_indices = a_vector<uint8_t>(256 * 256);
+	static constexpr int transmission_sound = 23;
+
+	void notify_replay_chat() override {
+		if (!is_paused && st.current_frame >= replay_frame)
+			play_acknowledgement_sound(transmission_sound);
+	}
+
+#ifdef EMSCRIPTEN
+	size_t presented_chat_sequence = 0;
+	size_t presented_chat_count = 0;
+
+	void draw_replay_chat() {
+		auto& chat = action_st.chat;
+		auto first = std::find_if(chat.recent.begin(), chat.recent.end(), [&](const replay_chat::message& m) {
+			return st.current_frame - m.frame < replay_chat::lifetime;
+		});
+		size_t count = chat.recent.end() - first;
+		if (!count) {
+			presented_chat_count = 0;
+			return;
+		}
+		if (!EM_ASM_INT({ return !!Module.replayChat; }, 0)) return;
+		if (chat.received != presented_chat_sequence || count != presented_chat_count) {
+			EM_ASM({ Module.replayChat.clear(); });
+			for (auto it = first; it != chat.recent.end(); ++it) {
+				const char* name = it->sender < replay_st.player_name.size() ? replay_st.player_name[it->sender].c_str() : "";
+				EM_ASM_({ Module.replayChat.add(HEAPU8.subarray($0, $1), HEAPU8.subarray($2, $3)); },
+					name, name + std::strlen(name), it->text.data(), it->text.data() + it->text.size());
+			}
+			presented_chat_sequence = chat.received;
+			presented_chat_count = count;
+		}
+		EM_ASM({ Module.replayChat.draw(); });
+	}
+#endif
+
 	void init() {
 		uint32_t rand_state = (uint32_t)clock.now().time_since_epoch().count();
 		auto rand = [&]() {
@@ -878,6 +919,24 @@ struct ui_functions: ui_util_functions {
 		load_data_file(images_tbl.data, "arr/images.tbl");
 
 		load_all_image_data(load_data_file);
+#ifdef EMSCRIPTEN
+		try {
+			load_data_file(data, "game/tfontgam.pcx");
+			if (data.size() >= 128 + 769 && data[data.size()-769] == 12 &&
+				data_loading::value_at<uint16_t, true>(data.data() + 8) == 63 &&
+				data_loading::value_at<uint16_t, true>(data.data() + 10) == 2) {
+				auto ramps = load_pcx_data(data);
+				if (ramps.width == 64 && ramps.height == 3) {
+					auto rgb = data.end() - 768;
+					std::array<uint8_t, 192 * 3> colors;
+					for (size_t i = 0; i != 192; ++i) std::copy_n(rgb + 3 * ramps.data[i], 3, colors.data() + 3 * i);
+					EM_ASM_({ if (Module.replayChat) Module.replayChat.setPalette(HEAPU8.slice($0, $0 + 576)); }, colors.data());
+				}
+			}
+		} catch (const exception&) {
+			// Optional UI palette; the text renderer also has a high-contrast fallback.
+		}
+#endif
 	}
 
 	virtual void on_action(int owner, int action) override {
@@ -2242,7 +2301,8 @@ struct ui_functions: ui_util_functions {
 		bool present_throttled = present_min_interval != std::chrono::high_resolution_clock::duration::zero() &&
 			last_present_time != std::chrono::high_resolution_clock::time_point::min() &&
 			now - last_present_time < present_min_interval;
-		if (!redraw_requested && (playback_static || frame_unchanged_since_present || present_throttled)) return;
+		// A paused seek may finish between presentations. Paint its target once.
+		if (!redraw_requested && (frame_unchanged_since_present || (present_throttled && !playback_static))) return;
 
 		uint8_t* data = (uint8_t*)indexed_surface->lock();
 		draw_tiles(data, indexed_surface->pitch);
@@ -2278,6 +2338,9 @@ struct ui_functions: ui_util_functions {
 		if (wnd) {
 			rgba_surface->blit(&*window_surface, 0, 0);
 			wnd.update_surface();
+#ifdef EMSCRIPTEN
+			draw_replay_chat();
+#endif
 		}
 		last_present_time = now;
 		last_presented_frame = st.current_frame;
@@ -2347,6 +2410,9 @@ struct ui_functions: ui_util_functions {
 	}
 
 	void reset() {
+#ifdef EMSCRIPTEN
+		presented_chat_count = 0;
+#endif
 		apm = {};
 		replay_frame = 0;
 		last_present_time = std::chrono::high_resolution_clock::time_point::min();

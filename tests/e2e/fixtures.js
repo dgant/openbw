@@ -5,7 +5,7 @@ const remoteReplayUrl = "https://replays.example.test/long-game.rep";
 const test = base.extend({
   page: async ({ page }, use) => {
     await page.addInitScript(() => { window.OPENBW_MPQ_BASE_URL = "https://assets.example.test/mpqs"; });
-    for (const file of ["STARDAT.MPQ", "BROODAT.MPQ", "patch_rt.mpq", "remastered/terrain.mpq"]) {
+    for (const file of ["STARDAT.MPQ", "BROODAT.MPQ", "patch_rt.mpq", "remastered/terrain.mpq", "font10.fnt"]) {
       await page.route("https://assets.example.test/mpqs/" + file, route => route.fulfill({
         path: "/workspace/mpqs/" + file,
         contentType: "application/octet-stream",

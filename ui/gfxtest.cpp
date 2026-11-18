@@ -1365,22 +1365,18 @@ int main() {
 		screen_width = current_width;
 		screen_height = current_height;
 	}
-	auto load_data_file = data_loading::data_files_directory<data_loading::data_files_loader<data_loading::mpq_file<data_loading::js_file_reader<>>>>("");
+	static auto load_data_file = data_loading::data_files_directory<data_loading::data_files_loader<data_loading::mpq_file<data_loading::js_file_reader<>>>>("");
 #else
-	auto load_data_file = data_loading::data_files_directory("");
+	static auto load_data_file = data_loading::data_files_directory("");
 #endif
 
 #ifdef OPENBW_REMASTERED_RUNTIME
 	load_data_file.mpqs.emplace_front("RemasteredTerrain.mpq");
 #endif
-	game_player player(load_data_file);
-
-	main_t m(std::move(player));
+	static main_t m{game_player(load_data_file)};
 	auto& ui = m.ui;
 
-	m.ui.load_all_image_data(load_data_file);
-
-	ui.load_data_file = [&](a_vector<uint8_t>& data, a_string filename) {
+	ui.load_data_file = [](a_vector<uint8_t>& data, a_string filename) {
 		load_data_file(data, std::move(filename));
 	};
 
