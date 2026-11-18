@@ -126,6 +126,11 @@ asset requests using files from the sibling `mpqs/` checkout.
 
 ## Release Verification
 
+Run `npx playwright test tests/e2e/replay-chat.spec.js` against the local viewer
+to check chat rendering, pause, expiry, snapshot rewind, and notification audio
+in both replay formats. The fixtures supply the font on one run and omit it on
+the other. The focused native action and missing-audio checks run in `test:source`.
+
 Run the full source, replay, browser, and desktop suites against newly built
 assets, with no skipped regressions or unexplained browser errors. The default
 browser is Chromium. For the shared engine lifecycle tests in Firefox and WebKit:
